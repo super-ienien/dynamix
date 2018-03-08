@@ -55,7 +55,7 @@ Remote.prototype._create = function (instance, socket)
 	for (var i in instance._remoteSockets)
 	{
 		iSocket = instance._remoteSockets[i];
-		if (socket && iSocket == socket) continue;
+		if (socket && iSocket === socket) continue;
 		userType = instance.userIs (iSocket.user);
 		json = jsons[userType] || (jsons[userType] = instance.toJSON (iSocket.user));
 		iSocket.emit ('remote-create', type, json);
@@ -64,23 +64,21 @@ Remote.prototype._create = function (instance, socket)
 
 Remote.prototype.update = function (instance, fields, socket)
 {
-	var type = instance.__static.name;
-	var jsons = {};
-	var json;
-	var userType;
-	var iSocket;
-	
+	const type = instance.__static.name;
+	const sockets = instance[privates.sockets];
+    const jsons = {};
+
 	if (!cache.isRegistered (type)) throw new Error (type + ' is not a registered Type');
 	
 	debug ('remote update : '+ type+ ' with id : '+cache.idOf (instance));
 	
-	for (var i in instance._remoteSockets)
+	for (let i in sockets)
 	{
-		iSocket = instance._remoteSockets[i];
+		let iSocket = sockets[i];
 		if (socket && iSocket === socket) continue;
 	
-		userType = instance.userIs (iSocket.user);
-		json = jsons[userType] || (jsons[userType] = instance.toJSON (fields, iSocket.user));
+		let userType = instance.userIs (iSocket.user);
+		let json = jsons[userType] || (jsons[userType] = instance.toObject (fields, iSocket.user));
 		iSocket.emit ('remote-update', type, json);
 	}
 }

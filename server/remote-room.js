@@ -176,6 +176,7 @@ RemoteRoom.prototype.bindSocket = function (socket)
             SecurizedUser.su (socket.user);
         }
         socket.user.bindSocket(socket);
+        /*
         if (this._syncHandlers)
         {
             for (let  i in this._syncHandlers)
@@ -183,6 +184,7 @@ RemoteRoom.prototype.bindSocket = function (socket)
                 socket.registerSyncRequestHandler (i, this._syncHandlers[i][0], this._syncHandlers[i][1]);
             }
         }
+        */
         let remoted = {};
         for (let i in initData)
         {
@@ -250,9 +252,9 @@ RemoteRoom.prototype.unbindSocket = function (socket)
 
 RemoteRoom.prototype.users = function (json)
 {
-    json = json == undefined ? false:true;
-    var users = [];
-    for (var i in this.sockets)
+    json = !!json;
+    let users = [];
+    for (let i in this.sockets)
     {
         if (!json) users.push(this.sockets[i].user);
         else users.push(this.sockets[i].user.toJSON());
@@ -262,11 +264,11 @@ RemoteRoom.prototype.users = function (json)
 
 RemoteRoom.prototype.destroy = function ()
 {
-    for (var i in this.sockets)
+    for (let i in this.sockets)
     {
         delete this.sockets[i];
     }
-    for (var i in this._cacheWatcherHandlers)
+    for (let i in this._cacheWatcherHandlers)
     {
         cache.watcher.removeListener(i, this._cacheWatcherHandlers[i]);
     }
@@ -293,7 +295,7 @@ RemoteRoom.autorun = Util.noop;
 RemoteRoom.getOne = function (p)
 {
     if (p instanceof Client) p = {client: p};
-    if (typeof p == 'object' && p.hasOwnProperty('client') && p.client instanceof Client)
+    if (typeof p === 'object' && p.hasOwnProperty('client') && p.client instanceof Client)
     {
         if (RemoteRoom.__cache.hasOwnProperty(this.name) && RemoteRoom.__cache[this.name].hasOwnProperty(p.client.id)) return RemoteRoom.__cache[this.name][p.client.id].initialize();
         if (!RemoteRoom.__cache.hasOwnProperty(this.name)) RemoteRoom.__cache[this.name] = {};

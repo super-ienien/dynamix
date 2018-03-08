@@ -2,6 +2,20 @@
 const _ = require ('lodash')
 ,  toRegexRange = require('to-regex-range');
 
+exports.parseIdString = function (idStr)
+{
+	let splitted = idStr.split('.');
+	return {type: splitted[0], id: splitted[1], error: splitted.length !== 2};
+};
+
+
+
+
+
+
+
+
+
 exports.parseCookies = function (rc)
 {
 	var list = {};

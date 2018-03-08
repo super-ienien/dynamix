@@ -1898,7 +1898,7 @@ Remoted.__remoteHookedAccessor = function (n, virtual)
 	{
 		var name, nVal;
 		name = n;
-		if (val == undefined) return this['_'+name];
+		if (val === undefined) return this['_'+name];
 		if (this['_'+name] === val) return Promise.resolve(val).bind(this);
 		
 		//Validation

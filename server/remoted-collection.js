@@ -4,22 +4,21 @@ const Remote = require ('./remote');
 const cache = require ('./cache');
 const util = require ('../helpers/util');
 
-function RemotedCollection (parent, path, virtual, inheritedParent, inheritedOwner, type, sortBy, ascendant)
+function RemotedCollection (parent, prop)
 {
-    var arr = [];
+    const arr = [];
     arr.__proto__ = RemotedCollection.prototype;
     arr.list = {};
-    arr.path = path;
+    arr.path = prop.name;
     arr.parent = parent;
-    arr.type= typeof type === 'function' ? type:null;
+    arr.type = typeof prop.type === 'function' ? prop.type:null; // TODO gérer les types dynamiques
     arr.typeName= type ? type.name:'';
-    arr.inheritedParent = inheritedParent;
-    arr.inheritedOwner = inheritedOwner;
-    arr.persistent = !virtual;
-    arr.persistentPath = path+'_ids';
+    arr.inheritedParent = prop.inheritedParent;
+    arr.inheritedOwner = prop.inheritedOwner;
+    arr.persistent = prop.persistent;
     arr.compare = RemotedCollection.prototype.compare.bind(arr);
     arr._autoRemove = RemotedCollection.prototype._autoRemove.bind(arr);
-    arr._sorting = sortBy ? arr._compileSortByParam (sortBy, ascendant) || {"_id": (ascendant !== undefined ? (ascendant ? true:false):true)} : null;
+    arr._sorting = null;
     arr.ids = {};
     return arr;
 }

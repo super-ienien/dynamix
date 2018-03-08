@@ -1,9 +1,399 @@
 "use strict";
+const EventEmitter = require ('events');
+const Securized = require('./security/securized');
+const Validation = require ('./validation');
+const privates = require ('./privates');
+
+/**Forbidden keywords
+
+ $deleteDomain
+ $destroy
+ $domain
+ $initialized
+ $save
+ $setDomain
+ $toObject
+
+ **/
+
+class Remoted extends EventEmitter {
+	constructor(data)
+	{
+        super();
+        this.setMaxListeners(200);
+
+        /**
+         * Wether the instance is initialized or not
+         * @member {boolean}
+         */
+        this.initialized = false;
+
+        this.destroyed = false;
+        Securized.call (this);
+
+        //Création des collections dynamiques
+        for (let i in this.__static.collections)
+        {
+            let prop = this.this.__static.collections[i];
+			this[prop.name] = RemotedCollection(this, prop);
+        }
+
+        //Création des propriétés privées;
+		this[privates.timeouts] = {};
+		this[privates.intervals] = {};
+		this[privates.immediates] = {};
+		this[privates.parents] = new Set();
+		this[privates.domains] = {};
+		this[privates.promises] = {};
+		this[privates.deferreds] = {};
+        this[privates.saveQueue] = [];
+		this[privates.init](data);
+
+		//binds
+        this[privates.removeParent] = this[privates.removeParent].bind(this);
+    }
+
+    /**
+     *
+     * @param {string} label
+     * @param {string} value
+     */
+    $setDomain (label, value)
+    {
+        this[privates.domains][label] = String(value);
+    }
+
+    $deleteDomain (label)
+    {
+        delete this[privates.domains][label];
+    }
+
+    /**
+     *
+     * @param {Object} opts
+     * @param {boolean} [opts.keep=true]
+     */
+    $destroy (opts)
+    {
+        if (this.destroyed) return;
+
+        // Destroy instance of this object on every connected clients
+        Remote.destroy(this);
+
+        for (let i in this[privates.deferreds])
+        {
+            if (!this[privates.deferreds][i]) continue;
+            this[privates.deferreds][i].reject(`${i} aborted, because object was destroyed`);
+        }
+        this[privates.deferreds] = null;
+
+        for (let i in this[privates.immediates])
+        {
+            if (!this[privates.immediates][i]) continue;
+            clearImmediate(this[privates.immediates][i]);
+        }
+
+        for (let i in this[privates.intervals])
+        {
+            if (!this[privates.intervals][i]) continue;
+            clearInterval(this[privates.intervals][i]);
+        }
+
+        for (let i in this[privates.timeouts])
+        {
+            if (!this[privates.timeouts][i]) continue;
+            clearInterval(this[privates.timeouts][i]);
+        }
+
+        if (this.__static.isPersistent)
+        {
+            let removeFromDB = true;
+            if (opts && opts.hasOwnProperty('keep')) {
+                removeFromDB = !opts.keep;
+            }
+            if (removeFromDB && this.initialized) this[privates.store].remove();
+        }
+
+        if (this.parent) this.parent.removeListener ('destroy', this.destroy);
+
+        cache.remove(this);
+        this.destroyed = true;
+        this.emit('destroy', this, opts);
+        this[privates.parent] = null;
+        this.removeAllListeners();
+    }
+
+    /**
+	 * Save changes to database and update them on each connected client.
+	 * @params {(string|string[])} [fields] - fields to save. If omitted all fields are saved
+     */
+    $save (fields)
+	{
+		if (!Array.isArray(fields)) fields = [fields];
+        this[privates.saveQueue].push(...fields);
+
+        if (!this[privates.deferreds].save)
+		{
+            //Lancement d'un nouveau cycle de sauvegarde.
+            return [privates.triggerSaveCycle]();
+        }
+        else if (this[privates.deferreds].saveNext)
+		{
+            //Cycle de sauvegarde en cours et deffered du prochain cycle déjà créé.
+			return this[privates.deferreds].saveNext;
+        }
+        else
+		{
+            //Cycle de sauvegarde en cours. Création du deffered du prochain cycle.
+            return this[privates.deferreds].saveNext = helpers.defer();
+		}
+	}
+
+    /**
+     * Convert a dynamix object into a Javascript Plain Object
+     * @params {string|string[]|fieldMap} [fields] - fields to insert into the output object. If omitted or null, all fields will be inserted into the output.
+     * @params {User} [user] - user object. The output will only contain data that match the user's permissions.
+     * @params {boolean} [protectFromCircularReferences=false] - if true, circular references will be replaced by the path of the first occurence an object.
+     */
+    $toObject (fields = null, user = null, protectFromCircularReferences = false, circularMap = null, path = null)
+    {
+        if (!this.__static.reverseMap) return {};
+        let map = getPropsMap(fields);
+        return dynamixToObject(this, map, user, protectFromCircularReferences, circularMap, path);
+    };
+
+
+    //PRIVATE METHODS
+    [privates.addParent] (parent)
+    {
+        if (this[privates.parents].has(parent)) return;
+        parent.on ('destroy', this[privates.removeParent]);
+        this[privates.parents].add(parent);
+    }
+
+    [privates.removeParent] (parent)
+    {
+        if (!this[privates.parents].has(parent)) return;
+        parent.removeListener ('destroy', this[privates.removeParent]);
+        this[privates.parents].delete(parent);
+        if (this[privates.removeParent].size === 0) this.destroy();
+    }
+
+    /**
+     *  Schedule a save operation on next event loop (setImmediate)
+     */
+	[privates.startSaveCycle] ()
+	{
+		if (this[privates.deferreds].saveNext)
+		{
+			this[privates.deferreds].save = this[privates.deferreds].saveNext;
+            this[privates.deferreds].saveNext = null;
+        }
+        else
+		{
+            this[privates.deferreds].save = helpers.defer();
+		}
+
+        this[privates.immediates] = setImmediate(()=>
+        {
+            if (this.destroyed) return;
+            let fields = this[privates.saveQueue];
+            for (let i = fields.length-1; i>=0; i--)
+            {
+                this[privates.store].markModified (fields[i]);
+            }
+            this[privates.saveQueue].length = 0;
+
+            //Update fields on each connected client
+            Remote.update(this, fields);
+
+            //Save to database
+            if (this.__static.isPersistent)
+            {
+				this[privates.promises].save = this[privates.store].saveAsync()
+				.reflect()
+				.then ((inspect) =>
+				{
+                    if (this.destroyed) return;
+                    this[privates.promises].save = null;
+
+                    if (inspect.isFulfilled())
+					{
+                        this[privates.deferreds].save.resolve(inspect.value());
+					}
+					else if (inspect.isRejected())
+					{
+                        this[privates.deferreds].save.reject(inspect.reason());
+					}
+					else
+					{
+                        this[privates.deferreds].save.reject('unknown save rejection');
+					}
+
+					// On démarre un nouveau  cycle de sauvegarde si fields sont présents dans la queue
+					if (this[privates.saveQueue].length)
+					{
+						this[privates.startSaveCycle]();
+					}
+				});
+			}
+
+            this[privates.immediates].save = null;
+        });
+
+        return this[privates.deferreds].save;
+    }
+}
+
+Securized.implements (Remoted);
+exports = module.exports = Remoted;
+
+function dynamixToObject (obj, map, user, protectFromCircularReferences, circularMap, path)
+{
+    path = path || '';
+    if (protectFromCircularReferences)
+	{
+        circularMap = new Map(circularMap);
+        circularMap.set(obj, path);
+	}
+
+    const json = {};
+
+    if (typeof obj !== 'object') return json;
+    for (let propertyName in map)
+    {
+        let val = obj[propertyName];
+        if (typeof val === 'undefined') continue;
+
+        let prop = map[propertyName];
+        if (prop.isPrivate) continue;
+        if (user && !obj.isAllowed (propertyName, 'r', user)) continue;
+
+        switch (prop.propType)
+        {
+            case 'property':
+                json[prop.jsonName] = val;
+                break;
+            case 'remoted':
+            case 'mapped-object':
+                if (prop.isArray)
+                {
+                    if (Array.isArray (val))
+                    {
+                        json[prop.jsonName] = [];
+                        if (prop.hasOwnProperty ('map'))
+                        {
+                            for (let i = 0, l = val.length; i<l; i++)
+                            {
+                                json[prop.jsonName].push (dynamixToObject(val[i], prop.reverseMap));
+                            }
+                        }
+                        else
+                        {
+                            json[prop.jsonName] = [];
+                            for (let i = 0, l = val.length; i<l; i++)
+                            {
+                            	let item = val[i];
+                            	if (item === null) json[prop.jsonName].push(null);
+								else if (protectFromCircularReferences && circularMap.has(val[i]))
+								{
+									json[prop.jsonName].push(circularMap.get(item));
+								}
+								else
+								{
+									json[prop.jsonName].push(item.toObject(prop.fields, user, protectFromCircularReferences, circularMap, path + (path ? '.':'') + propertyName + '.' + i));
+								}
+							}
+                        }
+                    }
+                }
+                else
+                {
+                    if (!val)
+                    {
+                        json[prop.jsonName] = null;
+                    }
+                    else if (map[propertyName].hasOwnProperty ('map'))
+                    {
+                        json[prop.jsonName] = this.dynamixToObject(val, prop.reverseMap);
+                    }
+                    else if (protectFromCircularReferences && circularMap.has(val))
+					{
+						json[prop.jsonName].push(circularMap.get(val));
+					}
+					else
+					{
+						json[prop.jsonName] = val.toObject(prop.fields, user, protectFromCircularReferences, circularMap, path + (path ? '.':'') + propertyName);
+					}
+				}
+			break;
+        }
+    }
+
+    if (obj.__static) {
+        json._id= obj.__static.name + '.' + obj._id;
+    }
+
+    return json;
+}
+
+function getPropsMap (dynamix, fields)
+{
+	if (typeof fields === 'string')
+	{
+        if (dynamix.__static.reverseMap.hasOwnProperty(fields))
+		{
+			return {[field]: this.__reverseMap[field]};
+        }
+	}
+	else if (Array.isArray(fields))
+    {
+        let map = {};
+        for (let i = 0, l = fields.length; i<l; i++)
+        {
+            let field = fields[i];
+            if (typeof fields === 'string')
+			{
+                if (dynamix.__static.reverseMap.hasOwnProperty(field))
+                {
+                    map[field] = this.__reverseMap[field];
+                }
+			}
+			else if (field.name && dynamix.__static.reverseMap.hasOwnProperty(field.name))
+			{
+				map[field.name] = Object.assign({fields: field.fields}, dynamix.__static.reverseMap[field.name]);
+			}
+        }
+    }
+    else if (fields && typeof fields === 'object')
+    {
+        let map = {};
+        for (let i in fields)
+        {
+            if (!dynamix.__static.reverseMap.hasOwnProperty(i)) continue;
+            let val = fields[i];
+            if (val && typeof val === 'object')
+            {
+                map[i] = Object.assign({fields: val}, dynamix.__static.reverseMap[i]);
+            }
+            else
+            {
+				map[i] = dynamix.__static.reverseMap[i];
+            }
+        }
+    }
+    else
+	{
+        return dynamix.__static.reverseMap;
+    }
+}
+
+
+
 
 var BaseObject = require('../helpers/baseobject')
-,   Securized = require('../security/securized')
 ,   util = require('util')
-,   Util = require('../helpers/util')
+,   helpers = require('../helpers/util')
 ,   RemotedError = require('./remoted-error')
 ,   Remote = require('./remote')
 ,   cache = require('./cache')
@@ -13,265 +403,12 @@ var BaseObject = require('../helpers/baseobject')
 ,   mongooseAdapter = require ('./mongoose-adapter')
 ,   ValidationPool = require ('../validation/validation-pool')
 ,   RemotedCollection = require ('./remoted-collection')
-,   RemotedMixedCollection = require ('./remoted-mixed-collection')
 ,	NotFoundError = require ('../helpers/errors/not-found-error')
 ,	_ = require ('lodash/core')
 ,   uuid= require('uuid');
 
-function RemotedRef (key, options) {
-	mongoose.SchemaType.call(this, key, options, 'RemotedRef');
-}
-RemotedRef.prototype = Object.create(mongoose.SchemaType.prototype);
 
-RemotedRef.prototype.cast = function(val) {
-	if (val)
-	{
-		switch (typeof val)
-		{
-			case 'object':
-				if (typeof val.type === 'string' && val.id) return {type: val.type, id: val.id};
-			break;
-			case 'string':
-				let splitted = val.split('-');
-				if (splitted.length>1)
-				{
-					return {type: splitted[0], id:splitted.slice(1).join('-')};
-				}
-			break;
-		}
-	}
-	throw new Error ("value is not valid");
-};
 
-RemotedRef.prototype.toString = function ()
-{
-	return this.type+'-'+this.id;
-};
-
-RemotedRef.prototype.toJSON = function ()
-{
-	return this.toString();
-};
-
-mongoose.Schema.Types.RemotedRef = RemotedRef;
-
-exports = module.exports = Remoted;
-
-function Remoted (data, circularRemotedMap)
-{
-	Securized.call (this);
-	Remoted.__super.call (this);
-	
-	this._remoteSockets = {};
-
-	for (let i in this.__remotedProps)
-	{
-		let prop = this.__remotedProps[i];
-        if (prop.array)
-        {
-            this[(!this.__static.virtual ? '$_':'')+prop.name] = RemotedCollection(this, prop.name, prop.virtual, prop.inheritedParent, prop.inheritedOwner, prop.type === '*' ? undefined:prop.type); /* TODO : à surveiller */
-        }
-	}
-
-	this._init(data, circularRemotedMap);
-}
-
-BaseObject.inherits (Remoted);
-Securized.implements (Remoted);
-
-//Remoted.prototype._reverseMap = {};
-
-Remoted.prototype.validateOne = function (name, value, user)
-{
-	var prop;
-	var security = typeof user === 'object';
-	if (!this.__map.hasOwnProperty(name))
-	{
-		if (!this.__reverseMap.hasOwnProperty(name))
-		{
-			return {
-				invalid: {error: true}
-			,   isInvalid: true
-			};
-		}
-		prop = this.__reverseMap[name];
-	}
-	else
-	{
-		prop = this.__map[name];
-	}
-
-	if (security && !this.isAllowed (prop.name, 'w', user))
-	{
-		console.error ('Warning : update aborted for property "'+prop.name+'" - user "'+user.name()+'" not allowed');
-		return {
-			invalid: {security: true}
-		,   isInvalid: true
-		};
-	}
-		
-	if (prop.hasValidator)
-	{
-		return prop.array ? prop.validator.validateArray (value):prop.validator.validate (value);	
-	}
-	else
-	{
-		return {
-		    valid: {}
-		,   isValid: true
-		};
-	}
-};
-
-Remoted.prototype.validate = function (data, user, result)
-{
-	var retBool = true;
-	var security = typeof user === 'object';
-	if (typeof result !== 'object')
-	{
-		retBool = false;
-		result = {};
-	}
-	var success = true;
-	var nbProp = 0;
-	for (var i in data)
-	{
-		if (!this.__map.hasOwnProperty(i))
-		{
-			delete data[i];
-			continue;
-		}
-		let prop = this.__map[i];
-		
-		if (security && !this.isAllowed (prop.name, 'w', user))
-		{
-			console.error ('Warning : update aborted for property "'+prop.name+'" - user "'+user.name()+'" not allowed');
-			result[prop.name] = {
-				invalid: {security: true}
-			,   isInvalid: true
-			};
-			delete data[i];
-			success = false;
-			continue;
-		}
-		if (prop.hasValidator)
-		{
-			result[prop.name] = prop.array ? prop.validator.validateArray (data[i]):prop.validator.validate (data[i]);
-			if (result[prop.name].isInvalid)
-			{
-				console.error ('Warning : update aborted for property "'+prop.name);
-				delete data[i];
-				success = false;
-				continue;
-			}
-			else if (prop.propType === 'remoted')
-			{
-				var instance = prop.accessor ? this[prop.name].call(this):this[prop.name];
-				if (typeof instance === 'object') result[prop.name] = instance.validate(data[i]);
-			}
-		}
-		else
-		{
-			result[prop.name] = {
-			    valid: {}
-			,   isValid: true
-			};
-		}
-		nbProp++;
-	}
-	if (nbProp === 0)
-	{
-		success = false;
-	}
-	return retBool ? success:result;
-};
-
-Remoted.prototype.update = function (data, user)
-{
-	var result = {};
-	if (!this.validate (data, user, result))
-	{
-		return result;
-	}
-	this._update (data, user);
-	return result;
-};
-
-Remoted.prototype._update = function (data, user)
-{
-	if (user == undefined)
-	{
-		console.error ('Warning : update operation aborted - no user provided');
-		return;
-	}
-	
-	var i;
-	var prop;
-	var instance;
-	var remotedPromises;
-	
-	for (i in data)
-	{
-		prop = this.__map[i];
-		switch (prop.propType)
-		{
-			case 'property':
-				if (prop.accessor) this['r_'+prop.name](data[i], user, false);
-				else this[prop.name] = data[i];
-			break;
-			case 'remoted':
-				if (!data[i] || typeof data[i] !== 'object') break;
-				if (!remotedPromises) remotedPromises = [];
-				instance = prop.accessor ? this[prop.name]():this[prop.name];
-				if (data[i]._id === instance._id)
-				{
-					remotedPromises[prop.name] = instance.update (data[i], user);
-				}
-				else if (data[i].hasOwnProperty ('_id'))
-				{
-					let type = typeof prop.type === 'function' ? prop.type:cache.getType(data[i].__type__);
-					if (!type) continue;
-					remotedPromises[prop.name] = type.getById (data[i]._id)
-					.bind(
-					{
-						self: this
-					,	prop: prop
-					,	type: type
-					,	data: data[i]
-					})
-					.then (function (instance)
-					{
-						if (this.prop.accessor) this.self['r_'+this.prop.name](instance, user, false);
-						else this.self[this.prop.name] = this.self[this.prop.name];
-						delete this.data._id;
-						if (Object.keys(this.data).length > 0) return instance.update (this.data, user);
-						return instance;
-					});
-				}
-			break;
-			case 'mapped-object':
-				if (prop.array)
-				{
-					if (util.isArray(data[i]))
-					{
-						var arr = [];
-						for (var j = 0, l = data[i].length; j<l; j++)
-						{
-							arr[j] = {};
-							_updateMappedObject (data[i][j], arr[j], this.__map[i].map);
-						}
-						if (prop.accessor) this['r_'+prop.name](arr, user, false);
-						else this[prop.name] = arr;
-					}
-				}
-				else
-				{
-					_updateMappedObject (data[i], prop.accessor ? this[prop.name]():this[prop.name], this.__map[i].map);
-				}
-			break;
-		}
-	}
-};
 
 function _updateMappedObject (data, object, map)
 {
@@ -311,15 +448,7 @@ function _updateMappedObject (data, object, map)
 
 Remoted.prototype.remoteUpdate = function (fields, socket)
 {
-	if (util.isArray(fields))
-	{
-		if (fields.indexOf ('_id') == -1) fields = fields.concat('_id');
-	}
-	else if (fields != '_id')
-	{
-		fields = [fields, '_id'];
-	}
-	Remote.update(this, fields, socket);
+
 };
 
 Remoted.prototype.remoteExecute = function (method, socket, remotedInstance)
@@ -991,28 +1120,6 @@ Remoted.addDataAdapter = function (name, adapter)
 
 Remoted.Error = RemotedError;
 
-Remoted.__inherits = Remoted.inherits;
-Remoted.__defaultRemote = false;
-
-Remoted.inherits = function (constructor, map, remoteProperty)
-{
-	Remoted.__inherits (constructor);
-
-	if (map)
-	{
-		constructor.setMap (map);
-	}
-	if (remoteProperty)
-	{
-		constructor.setRemoteProperty (remoteProperty);
-	}
-};
-
-Remoted.setRemoteProperty = function (remoteProperty)
-{
-	this._remoteProperty = remoteProperty;
-};
-
 Remoted.__dependencyPending = {
     props: {}
 ,   constructors: {}
@@ -1560,7 +1667,6 @@ function __compileMap (map, constructor)
         });
     }
     */
-
 }
 
 function __compileMongooseSchema (map)
@@ -1601,17 +1707,16 @@ Remoted.__createModelVirtualSetter = function (name)
 	{
 		this[name] = val._id;
 	}
-}
-
+};
 
 function __buildMongooseSchema (map)
 {
-	var schema = {};
-	var prop;
-	var schemaProp;
-	var schemaPropName;
+	let schema = {};
+    let prop;
+    let schemaProp;
+    let schemaPropName;
 
-	for (var i in map)
+	for (let i in map)
 	{
 		prop = map[i];
 		if (prop.virtual) continue;
@@ -1905,7 +2010,7 @@ Remoted.__remoteHookedAccessor = function (n, virtual)
 		validation = typeof validation === 'undefined' ? true:validation;
 		if (validation)
 		{
-			var result = this.validateOne(name, val, socket.user);
+			var result = Validation.validateOne(this, name, val, socket.user);
 			if (result.isInvalid)
 			{
 				throw result;
@@ -1963,7 +2068,7 @@ Remoted.__remoteAccessor = function (n, virtual)
 		validation = typeof validation === 'undefined' ? true:validation;
 		if (validation)
 		{
-			var result = this.validateOne(name, val, socket.user, socket);
+			var result = validation.validateOne(this, name, val, socket.user, socket);
 			if (result.isInvalid)
 			{
 				throw result;

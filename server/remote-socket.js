@@ -1,11 +1,11 @@
 "use strict";
+const Validation = require ('./validation');
 
-var EventEmitter = require ('events').EventEmitter;
-var cache = require("./cache");
-var util = require("util");
-var RemotedError = require('./remoted-error')
-var debug = util.debuglog ('remote');
-var Modulator = require('../modulator');
+let EventEmitter = require ('events');
+let cache = require("./cache");
+let util = require("util");
+let RemotedError = require('./remoted-error');
+let debug = util.debuglog ('remote');
 
 module.exports = exports = RemoteSocket;
 
@@ -15,8 +15,8 @@ function RemoteSocket (socket)
 	
 	this._emitter = new EventEmitter();
 	
-	socket.on ('remote-sync-request', _ioSyncRequestHandler.bind (this));	
-	socket.on ('remote-update-request', _ioUpdateRequestHandler.bind ( this));
+	// socket.on ('remote-sync-request', _ioSyncRequestHandler.bind (this));
+	// socket.on ('remote-update-request', _ioUpdateRequestHandler.bind ( this));
 	socket.on ('remote-update', _ioUpdateHandler.bind (this));
 	socket.on ('remote-execute', _ioExecuteHandler.bind (this));
 	socket.on ('remote-create', _ioCreateHandler.bind (this));
@@ -28,9 +28,10 @@ function RemoteSocket (socket)
 	this.user = socket.user;
 	this.connected = true;
 	this.instances = {};
+
 	this._instancesDestroyHandlers = {};
 	
-	this._syncRequestHandlers = {};
+	// this._syncRequestHandlers = {};
 	
 	this.registerInstance(socket.user);
 
@@ -40,32 +41,33 @@ function RemoteSocket (socket)
 RemoteSocket.prototype.init = function (data)
 {
 	data = typeof data === 'object' ? data:{};
-	data.remoted.user = {type: this.user.__static.name, data: this.user.toJSON(this.user)};
-	data.modules = Modulator.modules(this.user);
+	data.remoted.user = {type: this.user.__static.name, data: this.user.toObject(this.user)};
+	// data.modules = Modulator.modules(this.user);
 	data.serverTime = new Date();
 	this.socket.emit ('remote-init', data);
 };
+
+/*
 
 function _ioSyncRequestHandler (type)
 {
 	if (!cache.isRegistered (type)) 
 	{
-		debug ('sync aborted is not registerd '+type);
+		debug ('sync aborted is not registered '+type);
 		return;
 	}
 	
 	debug ('sync request : '+type);
-	var self = this;
-	if (typeof this._syncRequestHandlers[type] == 'function')
+	let self = this;
+	if (typeof this._syncRequestHandlers[type] === 'function')
 	{
 		debug ('sync respond : '+type);
-		var val = this._syncRequestHandlers[type](type, this.user);
+		let val = this._syncRequestHandlers[type](type, this.user);
 		if (val instanceof Promise)
 		{
-			self = this;
-			val.then (function (result)
+			val.then((result) =>
 			{
-				self.socket.emit ('remote-sync', type, self._ioSyncProcessResult(result));
+				self.socket.emit ('remote-sync', type, this._ioSyncProcessResult(result));
 			});
 		}
 		else
@@ -77,9 +79,9 @@ function _ioSyncRequestHandler (type)
 
 RemoteSocket.prototype._ioSyncProcessResult = function (instances)
 {
-	var json = [];
+	let json = [];
 	debug ('process sync handler');
-	for (var i in instances)
+	for (let i in instances)
 	{
 		this.registerInstance(instances[i]);
 		json.push(instances[i].toJSON (this.user));
@@ -92,9 +94,9 @@ function _ioUpdateRequestHandler (type, id)
 	debug ('update request : '+type);
 	if (!cache.isRegistered (type)) return;
 	if (!util.isArray (id)) id = [id];
-	var result = [];
-	var instance;
-	for (var i = 0, l=id.length; i<l; i++)
+	let result = [];
+	let instance;
+	for (let i = 0, l=id.length; i<l; i++)
 	{
 		instance = cache.exists (type, id[i]);
         if (instance)
@@ -113,19 +115,19 @@ function _ioUpdateRequestHandler (type, id)
 		this.emit('remote-update', type, result);
 	}
 }
+*/
 
 function _ioUpdateHandler (uid, type, data)
 {
 	if (!cache.isRegistered (type)) return;
 	debug ('update received : '+type);
-	if (!util.isArray (data))
-	{
+	if (!Array.isArray (data)) {
 		data = [data];
 	}
-	var p = [];
-	for (var i = 0, l = data.length; i<l; i++)
+	let p = [];
+	for (let i = 0, l = data.length; i<l; i++)
 	{
-		var instance = cache.exists (type, data[i]);
+		let instance = cache.exists (type, data[i]);
 		if (instance)
 		{
 			delete data[i]._id;
@@ -134,7 +136,7 @@ function _ioUpdateHandler (uid, type, data)
 	}
 	
 	if (uid === false) return;
-	var self = this;
+	let self = this;
 	Promise.settle (p).map (function (result)
 	{
 		if (result.isFulfilled())
@@ -160,16 +162,95 @@ function _ioUpdateHandler (uid, type, data)
 	});
 }
 
+function updateDynamix (dynamix, data, user)
+{
+    const result = {};
+    if (!Validation.validate(dynamix, data, user, result)) return result;
+
+    if (typeof user === 'undefined')
+    {
+        console.error ('Warning : update operation aborted - no user provided');
+        return result;
+    }
+
+    const promises = [];
+    for (let i in data)
+    {
+        let p = updateDynamix(dynamix, this.__map[i], data[i], user);
+        if (p) promises.push(p);
+    }
+
+    return promises.length > 0 ? promises.all(promises).finally(() => result):result;
+}
+
+function updateDynamixField (dynamix, prop, value, user, socket)
+{
+	switch (prop.propType)
+	{
+		case 'property':
+			prop.setter.call(dynamix, value, user, socket);
+		break;
+		case 'remoted':
+			if (!value || typeof value !== 'object')
+			{
+                prop.setter.call(dynamix, null, user, socket);
+			}
+			else
+			{
+				let type = typeof prop.type === 'function' ? prop.type:cache.getType(data[i].__type__);
+				if (!type) continue;
+				remotedPromises[prop.name] = type.getById (data[i]._id)
+				.bind(
+					{
+						self: this
+					,	prop: prop
+					,	type: type
+					,	data: data[i]
+					})
+				.then (function (instance)
+				{
+					if (this.prop.accessor) this.self['r_'+this.prop.name](instance, user, false);
+					else this.self[this.prop.name] = this.self[this.prop.name];
+					delete this.data._id;
+					if (Object.keys(this.data).length > 0) return instance.update (this.data, user);
+					return instance;
+				});
+			}
+			break;
+		case 'mapped-object':
+			if (prop.array)
+			{
+				if (util.isArray(data[i]))
+				{
+					var arr = [];
+					for (var j = 0, l = data[i].length; j<l; j++)
+					{
+						arr[j] = {};
+						_updateMappedObject (data[i][j], arr[j], this.__map[i].map);
+					}
+					if (prop.accessor) this['r_'+prop.name](arr, user, false);
+					else this[prop.name] = arr;
+				}
+			}
+			else
+			{
+				_updateMappedObject (data[i], prop.accessor ? this[prop.name]():this[prop.name], this.__map[i].map);
+			}
+			break;
+        }
+    }
+}
+
 function _ioExecuteHandler (uid, type, id, method, val)
 {
-	var self = this;
-	var mode = 'x';
-	var methodPrefix = '';
-	var ret = {};
-	var methodFound = false;
-	var instance;
-	var collection;
-	var remoted;
+	let self = this;
+	let mode = 'x';
+	let methodPrefix = '';
+	let ret = {};
+	let methodFound = false;
+	let instance;
+	let collection;
+	let remoted;
 
 	if (cache.isRegistered (type))
 	{
@@ -281,7 +362,7 @@ function _ioExecuteHandler (uid, type, id, method, val)
 		}
 		else if (instance !== false)
 		{
-			var typeObject = cache.getType (type);
+			let typeObject = cache.getType (type);
 			if (typeObject !== false && typeof typeObject[method] == 'function')
 			{
 			
@@ -403,14 +484,14 @@ function _ioExecuteHandler (uid, type, id, method, val)
 
 function _ioCreateHandler (uid, type, data)
 {
-	var ret = null;
+	let ret = null;
 	if (cache.isRegistered (type))
 	{
 		if (cache.getType(type).canCreate(this.user))
 		{
 			debug ('create received : "'+type+'" '+uid);
 			data.__creator__ = this.user;
-			var instance = cache.exists (type, data);
+			let instance = cache.exists (type, data);
 			
 			if (!instance)
 			{
@@ -442,7 +523,7 @@ function _ioCreateHandler (uid, type, data)
 	}
 	
 	if (uid === false) return;
-	var self = this;
+	let self = this;
 	if (ret instanceof Promise)
 	{
 		ret.then(function ()
@@ -463,11 +544,11 @@ function _ioCreateHandler (uid, type, data)
 
 function _ioDestroyHandler (uid, type, data)
 {
-	var ret;
+	let ret;
 	if (cache.isRegistered (type))
 	{
 			debug ('destroy received : '+type);
-			var instance = cache.exists (type, data);
+			let instance = cache.exists (type, data);
 			if (instance)
 			{
 				if (instance.isAllowed('__destroy__', 'x', this.user))
@@ -494,7 +575,7 @@ function _ioDestroyHandler (uid, type, data)
 	}
 	
 	if (uid === false) return;
-	var self = this;
+	let self = this;
 	if (ret instanceof Promise)
 	{
 		ret.then(function ()
@@ -537,7 +618,7 @@ function _ioDestroyHandler (uid, type, data)
 
 RemoteSocket.prototype.hasInstance = function(instance)
 {
-	if (typeof instance._id == 'undefined')
+	if (typeof instance._id === 'undefined')
     {
         throw new Error ('instance of '+instance.__static.name+'must have an _id');
     }
@@ -548,18 +629,18 @@ RemoteSocket.prototype.registerInstance = function(instance)
 {
     if (!instance) return;
 	if (this.hasInstance(instance)) return false;
-	var instanceId = this.instanceId(instance);
+	let instanceId = this.instanceId(instance);
 	instance._remoteSockets[this.id] = this;
 	this.instances[instanceId] = instance;
 	this._instancesDestroyHandlers[instanceId] = this.unregisterInstance.bind(this, instance);
 	instance.on ('destroy', this._instancesDestroyHandlers[instanceId]);
-	var collection;
-    for (var i in instance.__remotedProps)
+	let collection;
+    for (let i in instance.__remotedProps)
 	{
         if (instance.__remotedProps[i].array)
         {
             collection = instance[instance.__remotedProps[i].name];
-            for (var j in collection.list)
+            for (let j in collection.list)
             {
                 this.registerInstance(collection.list[j]);
             }
@@ -575,7 +656,7 @@ RemoteSocket.prototype.registerInstance = function(instance)
 RemoteSocket.prototype.unregisterInstance = function(instance)
 {
 	if (!this.hasInstance(instance)) return false;
-	var instanceId = this.instanceId(instance);
+	let instanceId = this.instanceId(instance);
 	delete instance._remoteSockets[this.id];
 	instance.removeListener ('destroy', this._instancesDestroyHandlers[instanceId]);
 	delete this.instances[instanceId];
@@ -585,7 +666,7 @@ RemoteSocket.prototype.unregisterInstance = function(instance)
 
 RemoteSocket.prototype.unregisterAllInstances = function()
 {
-	for (var i in this.instances)
+	for (let i in this.instances)
 	{
         delete this.instances[i]._remoteSockets[this.id];
         this.instances[i].removeListener ('destroy', this._instancesDestroyHandlers[i]);
@@ -601,13 +682,13 @@ RemoteSocket.prototype.instanceId = function (instance)
 
 RemoteSocket.prototype.isAlive = function ()
 {
-    var self = this;
+    let self = this;
     return new Promise (function (resolve, reject)
     {
         if (!self.connected) return reject(self);
         console.log ('emitting is alive message');
         self.socket.emit ('is-alive');
-        var tid = setTimeout (function ()
+        let tid = setTimeout (function ()
         {
             console.log ('keep alive timeout');
             if (!self.connected) return reject(self);
@@ -629,12 +710,12 @@ RemoteSocket.prototype.isAlive = function ()
 
 RemoteSocket.prototype.kill = function ()
 {
-    var self = this;
+    let self = this;
     return new Promise (function (resolve, reject)
     {
         if (!self.connected) return resolve();
         self.emit ('remote-kill');
-        var to = setTimeout(function ()
+        let to = setTimeout(function ()
         {
             reject (new Error ("Disconnect timeout for kill user "+self.user.name()+" of "+self.user.client.name+" : "+self.id));
         }, 3000);
@@ -658,11 +739,14 @@ RemoteSocket.prototype.destroy = function ()
     delete this.socket.user;
 };
 
+/*
+
 RemoteSocket.prototype.registerSyncRequestHandler = function (type, handler, context)
 {
 	if (context) this._syncRequestHandlers[type] = handler.bind (context);
 	else this._syncRequestHandlers[type] = handler;
 };
+*/
 
 RemoteSocket.prototype.emit = function (e)
 {
@@ -679,7 +763,7 @@ RemoteSocket.prototype.emit = function (e)
 	{
 		return this._emitter.emit.apply (this._emitter, arguments);
 	}
-}
+};
 
 RemoteSocket.prototype.on = function (e)
 {
@@ -697,7 +781,7 @@ RemoteSocket.prototype.on = function (e)
 		this._emitter.on.apply (this._emitter, arguments);
 	}
 	return this;
-}
+};
 
 RemoteSocket.prototype.once = function (e)
 {
@@ -715,7 +799,7 @@ RemoteSocket.prototype.once = function (e)
 		this._emitter.once.apply (this._emitter, arguments);
 	}
 	return this;
-}
+};
 
 RemoteSocket.prototype.removeListener = function (e)
 {
@@ -733,7 +817,7 @@ RemoteSocket.prototype.removeListener = function (e)
 		this._emitter.removeListener.apply (this._emitter, arguments);
 	}
 	return this;
-}
+};
 
 RemoteSocket.prototype.removeAllListeners = function (e)
 {
@@ -746,9 +830,9 @@ RemoteSocket.prototype.removeAllListeners = function (e)
 		this._emitter.removeAllListeners(e);
 	}
 	return this;
-}
+};
 
 RemoteSocket.prototype.disconnect = function()
 {
     if (this.connected) this.socket.disconnect();
-}
+};
