@@ -188,7 +188,8 @@ function updateDynamixField (dynamix, prop, value, user, socket)
 	switch (prop.propType)
 	{
 		case 'property':
-			prop.setter.call(dynamix, value, user, socket);
+			prop.setter.call(dynamix, value, user);
+			return prop.getter.call(dynamix);
 		break;
 		case 'remoted':
 			if (!value || typeof value !== 'object')

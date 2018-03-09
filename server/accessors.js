@@ -1,49 +1,37 @@
 const privates = require('./privates');
 
 module.exports = {
-    simple (name)
+    simple (prop, willUpdate, didUpdate, index)
     {
-        return {
-            get ()
-            {
-                return this.$store[name];
-            },
-            set (value)
-            {
-                this.$store[name] = value;
-                dynamixRemote.update (this, name, nVal);
-                this.save(name);
-            }
-        }
-    },
-    simpleHooked (name, preHook, postHook, index)
-    {
+        const name = prop.name;
         return {
             accessor: {
                 get ()
                 {
                     return this[privates.store][name];
                 },
-                set (value)
+                set (value, user)
                 {
                     if (this[privates.store][name] === value) return;
-                    if (preHook)
+                    if (willUpdate)
                     {
-                        value = preHook.call(this, value);
+                        value = willUpdate.call(this, value, user);
                         if (typeof value === 'undefined') return;
                     }
-                    if (index) if (!cache.updateIndex(this, name, value, this[privates.store][name])) return;
-                    this.$store[name] = value;
-                    dynamixRemote.update (this, name, value);
-                    this.save(name);
-                    if (postHook) postHook.call(this, value)
+                    if (index) cache.updateIndex(this, name, value, this[privates.store][name]); //todo throw an error
+                    this[privates.store][name] = value;
+                    this.$save(name, !!user); //save only in DB if user is provided
+                    if (didUpdate) didUpdate.call(this, value, user);
                 }
             }
         }
     },
-    remoted (name)
+    remoted (prop, willUpdate, didUpdate, index)
     {
-        const destroyHandlers = new Map();
+        const name = prop.name;
+        const symbol = prop.symbol;
+        const inheritsDomains = prop.inheritsDomains;
+        const destroyHandlers = new WeakMap();
 
         function getDestroyHandler (instance)
         {
@@ -55,49 +43,86 @@ module.exports = {
 
         function onDestroy (val)
         {
-            if (privateValue !== val) return;
-            privateValue = null;
-            this.$store[name] = null;
-            this.save(name);
+            if (this[privates.store][name] !== val) return;
+            if (index) if (!cache.updateIndex(this, name, null, this[privates.virtualStore][name])) return;
+            this[privates.virtualStore][name] = null;
+            this[privates.store][name] = '';
+            this.$save(name);
         }
 
         return {
             get ()
             {
-                return this.$[name];
+                return this[privates.virtualStore][name];
             },
-            set (value)
+            set (value, user)
             {
-                if (this.$[name])
+                if (this[privates.virtualStore][name] === value) return;
+
+                if (willUpdate) willUpdate.call(this, value, user);
+                this[symbol] = value;
+                this.$save(name, !!user); //save only in DB if user is provided
+                if (didUpdate) didUpdate.call(this, value, user);
+            },
+            symbolSetter(value)
+            {
+                let oldValue = this[privates.virtualStore][name];
+                if (index) cache.updateIndex(this, name, value, oldValue);
+                if (oldValue)
                 {
-                    this.$[name].removeListener('destroy', getDestroyHandler(this));
+                    oldValue[privates.removeParent](this);
+                    oldValue.removeListener('destroy', getDestroyHandler(this));
+                    if (inheritsDomains === true)
+                    {
+                        for (let domain in this[privates.domains])
+                        {
+                            oldValue.$deleteDomain(domain);
+                        }
+                    }
+                    else if (Array.isArray(inheritsDomains))
+                    {
+                        inheritsDomains.forEach((domain) => oldValue.$deleteDomain(domain));
+                    }
                 }
-                this.$[name] = value;
                 if (value === null)
                 {
-                    this.$store[name] = null;
+                    this[privates.store][name] = '';
                 }
                 else
                 {
+                    value[privates.addParent](this);
+                    if (inheritsDomains === true)
+                    {
+                        for (let domain in this[privates.domains])
+                        {
+                            value.$setDomain(domain, this[privates.domains][domain]);
+                        }
+                    }
+                    else if (Array.isArray(inheritsDomains))
+                    {
+                        inheritsDomains.forEach((domain) => oldValue.$setDomain(domain, this[privates.domains][domain]));
+                    }
                     value.once('destroy', getDestroyHandler(this));
-                    this.$store[name] = value.toReference();
+                    this[privates.store][name] = value.toString();
                 }
-                this.$store.markModified(name);
+
+                this[privates.virtualStore][name] = value;
             }
         }
     },
-    remotedCollection (name)
+    collection (prop)
     {
+        const name = prop.name;
         return {
             get ()
             {
-                return this.$[name];
+                return this[privates.virtualStore][name];
             },
-            set (value)
+            set (value, user)
             {
                 if (Array.isArray(value))
                 {
-                    this.$[name].set(value);
+                    this[privates.virtualStore][name].set(value, user);
                 }
             }
         }

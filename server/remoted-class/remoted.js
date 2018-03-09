@@ -46,7 +46,7 @@ class Remoted extends EventEmitter {
 		this[privates.domains] = {};
 		this[privates.promises] = {};
 		this[privates.deferreds] = {};
-        this[privates.saveQueue] = [];
+        this[privates.saveQueue] = new Map();
 		this[privates.init](data);
 
 		//binds
@@ -105,6 +105,11 @@ class Remoted extends EventEmitter {
             clearInterval(this[privates.timeouts][i]);
         }
 
+        for (let parent of this[privates.parents])
+        {
+            parent.removeListener ('destroy', this[privates.removeParent]);
+        }
+
         if (this.__static.isPersistent)
         {
             let removeFromDB = true;
@@ -114,12 +119,10 @@ class Remoted extends EventEmitter {
             if (removeFromDB && this.initialized) this[privates.store].remove();
         }
 
-        if (this.parent) this.parent.removeListener ('destroy', this.destroy);
-
         cache.remove(this);
         this.destroyed = true;
         this.emit('destroy', this, opts);
-        this[privates.parent] = null;
+        this[privates.parents] = null;
         this.removeAllListeners();
     }
 
@@ -127,10 +130,16 @@ class Remoted extends EventEmitter {
 	 * Save changes to database and update them on each connected client.
 	 * @params {(string|string[])} [fields] - fields to save. If omitted all fields are saved
      */
-    $save (fields)
+    $save (fields, localOnly = false)
 	{
-		if (!Array.isArray(fields)) fields = [fields];
-        this[privates.saveQueue].push(...fields);
+		if (!Array.isArray(fields)) this[privates.saveQueue].set(fields, this[privates.saveQueue].get(fields) ? localOnly:false);
+        else {
+            for (let i = 0, l = fields.length; i<l; i++)
+            {
+                let field = fields[i];
+                this[privates.saveQueue].set(field, this[privates.saveQueue].get(field) ? localOnly:false)
+            }
+        }
 
         if (!this[privates.deferreds].save)
 		{
@@ -194,18 +203,19 @@ class Remoted extends EventEmitter {
             this[privates.deferreds].save = helpers.defer();
 		}
 
+
         this[privates.immediates] = setImmediate(()=>
         {
             if (this.destroyed) return;
-            let fields = this[privates.saveQueue];
+            let fields = Array.from(this[privates.saveQueue].keys());
             for (let i = fields.length-1; i>=0; i--)
             {
                 this[privates.store].markModified (fields[i]);
             }
-            this[privates.saveQueue].length = 0;
 
-            //Update fields on each connected client
-            Remote.update(this, fields);
+            Remote.update(this, Array.from(this[privates.saveQueue].entries()).filter(([field, localOnly]) => !localOnly));
+
+            this[privates.saveQueue].clear();
 
             //Save to database
             if (this.__static.isPersistent)
@@ -389,8 +399,6 @@ function getPropsMap (dynamix, fields)
 }
 
 
-
-
 var BaseObject = require('../helpers/baseobject')
 ,   util = require('util')
 ,   helpers = require('../helpers/util')
@@ -509,7 +517,7 @@ Remoted.prototype._init = function (obj)
 	}
 };
 
-Remoted.prototype._runInit = function (obj)
+function initializeDynamix (obj)
 {
 	var remotedPromisesHash = {};
 	var remotedPromisesArray;
@@ -828,9 +836,9 @@ Remoted.prototype._runInit = function (obj)
 	{
 		this._resolveInit(obj);
 	}
-};
+}
 
-Remoted.prototype._resolveDefaultProperty = function (prop, val, obj)
+function resolveDefaultProperty (prop, val, obj)
 {
 	switch (typeof val)
 	{
@@ -849,7 +857,7 @@ Remoted.prototype._resolveDefaultProperty = function (prop, val, obj)
 	}
 };
 
-Remoted.prototype._resolveDefaultRemoted = function (prop, obj, type)
+function resolveDefaultRemoted (prop, obj, type)
 {
     var data;
 	type = cache.getType(type) || prop.type;

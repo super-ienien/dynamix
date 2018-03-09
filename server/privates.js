@@ -13,4 +13,5 @@ module.exports = {
     startSaveCycle: Symbol('startSaveCycle'),
     store: Symbol('store'),
     timeouts: Symbol('timeouts'),
+    virtualStore: Symbol('virtualStore'),
 };

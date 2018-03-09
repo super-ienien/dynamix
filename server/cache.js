@@ -11,6 +11,7 @@ module.exports = exports = {
 ,   exists
 ,   get
 ,   getBy
+,   getFromString
 ,   getOneBy
 ,   getOneByOrCreate
 ,   getType
@@ -49,7 +50,7 @@ function add (instance)
 
 function exists(type, id)
 {
-    return cache.get(type).instances.get(String(id)) || false;
+    return cache.get(type).cache.get(String(id)) || false;
 }
 
 function get (type, arg1, arg2)
@@ -152,9 +153,16 @@ function getBy (type, search)
     return Array.from(results);
 }
 
+function getFromString (idStr)
+{
+    let splitted = idStr.split('.');
+    if (splitted.length !== 2 || !cache.has(splitted[0])) return null;
+    return getOneBy(splitted[0], splitted[1]);
+}
+
 function getOneBy (type, search)
 {
-    return getBy(type, search)[0];
+    return getBy(type, search)[0] || null;
 }
 
 function getOneByOrCreate (type, search, data)
@@ -242,6 +250,7 @@ function updateIndex(instance, field, newValue, oldValue)
 {
 	let typeInfos = cache.get(instance.__static.name);
     let index = typeInfos.indices.get(field);
+    if (!typeInfos.cache.has(instance.toString())) return;
     if (typeInfos.uniques[field])
     {
         if (index.has(newValue)) return false;
