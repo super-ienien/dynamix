@@ -19,4 +19,6 @@ EnumValidator.prototype.errorMessage = function (val)
 	"The value : '"+val+"' is not allowed";
 }
 
+EnumValidator.prototype.restricTo = ['string', 'number', 'integer'];
+
 validators.enum = module.exports = exports = EnumValidator;

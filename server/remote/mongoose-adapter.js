@@ -438,7 +438,7 @@ adapter.create = function (data)
 
 adapter.getById = function (id)
 {
-	var instance = cache.exists (this, id);
+	let instance = cache.exists (this, id);
 	if (instance) return instance.initialize();
 
 	return this.findById (id)

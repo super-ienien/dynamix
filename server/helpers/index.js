@@ -3,9 +3,16 @@ const _ = require ('lodash')
 ,  toRegexRange = require('to-regex-range');
 
 module.exports = {
-	parseIdString
+    inspectPromise
+,   parseIdString
 ,	rundown
 };
+
+function inspectPromise (promise)
+{
+    return Promise.resolve(promise).then((value) => { return {isFulfilled: true, isRejected: false, value}})
+    .catch((reason) => { return {isFulfilled: false, isRejected: true, reason}});
+}
 
 function parseIdString(idStr) {
 	let splitted = idStr.split('.');

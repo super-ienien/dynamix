@@ -18,7 +18,7 @@ RequiredValidator.prototype.rule = function (val)
 		default:
 			return true;
 	}
-}
+};
 
 RequiredValidator.prototype.errorCode = 10;
 RequiredValidator.prototype.errorMessage = 'Value is required';

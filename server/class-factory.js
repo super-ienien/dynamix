@@ -150,3 +150,6 @@ function parseFactoryArguments(args)
     if (ret.constructor === null) throw new Error ('Invalid arguments in Dynamix register. You must provide a class constructor.');
     return ret;
 }
+
+//Property
+

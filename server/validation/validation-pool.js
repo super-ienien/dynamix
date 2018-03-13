@@ -1,102 +1,105 @@
 require ('./validators/');
-var validatorsList = require ('./validators');
-var Validator = require ('./validator');
-var utilNode = require('util')
+const validatorsList = require ('./validators');
+const requiredValidator = require('./validators/required-validator');
 
-function ValidationPool ()
+class ValidationPool
 {
-	this.validators = {};
-	this.length = 0;
+	constructor()
+    {
+        this.validators = new Map();
+    }
+
+    add (validator, args)
+    {
+        if (validator === 'required')
+        {
+            this.required = true;
+            return;
+        }
+
+        if (typeof validator === 'string')
+        {
+            if (!validatorsList[validator]) throw new Error ('unknow validator : '+validator);
+            if (typeof validatorsList[validator] === 'function')
+            {
+                validator = new validatorsList[validator](args);
+            }
+            else
+            {
+                validator = validatorsList[validator];
+            }
+        }
+        this.validators.set(validator.type, validator);
+    }
+
+    validate (val, resultRef)
+    {
+        const result = typeof resultRef === 'object' ?  resultRef:{};
+
+        result.invalid = {};
+        result.valid =  {};
+        result.isValid = false;
+        result.isInvalid = false;
+
+        try
+        {
+            for (let [type, validator] of this.validators)
+            {
+                validator.validate(val);
+                result.valid[type] = true;
+            }
+        }
+        catch (e)
+        {
+            result.invalid[e.type] = true;
+            result.isInvalid = true;
+        }
+
+        if (!result.isInvalid) result.isValid = true;
+        return resultRef ? result.isValid : result;
+    }
+
+    validateArray (arr, resultRef)
+    {
+        const result = typeof resultRef === 'object' ?  resultRef:{};
+
+        result.invalid = {};
+        result.valid =  {};
+        result.isValid = false;
+        result.isInvalid = false;
+
+
+        try
+        {
+            if (arr === null)
+            {
+                if (this.required)
+                {
+                    requiredValidator.validate(val);
+                    result.valid.required = true;
+                }
+            }
+            else
+            {
+                for (let [type, validator] of this.validators)
+                {
+                    for (let i = 0, l = arr.length; i<l; i++)
+                    {
+                        validator.validate(arr[i]);
+                    }
+                    result.valid[type] = true;
+                }
+            }
+        }
+        catch (e)
+        {
+            result.invalid[e.type] = true;
+            result.isInvalid = true;
+        }
+
+        if (!result.isInvalid) result.isValid = true;
+        return resultRef ? result.isValid : result;
+    }
 }
 
-module.exports = exports = ValidationPool;
-
-ValidationPool.prototype.add = function (validator, args)
-{
-	if (typeof validator === 'string')
-	{
-		if (!validatorsList.hasOwnProperty (validator)) throw new Error ('unknow validator : '+validator);
-		if (typeof validatorsList[validator] === 'function')
-		{
-			validator = new validatorsList[validator](args);
-		}
-		else
-		{
-			validator = validatorsList[validator];
-		}
-	}
-	if (!this.validators.hasOwnProperty(validator.type)) this.length++;
-	this.validators[validator.type] = validator;
-}
-
-ValidationPool.prototype.validate = function (val, resultRef)
-{
-	var result = typeof resultRef === 'object' ?  resultRef:{};
-	var v;
-	
-	result.invalid = {};
-	result.valid =  {};
-	
-	for (var i in this.validators)
-	{
-		try
-		{
-			this.validators[i].validate(val);
-			result.valid[i] = true;
-		}
-		catch (error)
-		{
-			console.log (error);
-			result.invalid[i] = true;
-			result.isInvalid = true;	
-		}
-	}
-	if (!result.hasOwnProperty ('isInvalid'))
-	{
-		result.isValid = true;
-		result.isInvalid = false;
-	}
-	return resultRef ? result.isValid : result;
-}
-
-
-ValidationPool.prototype.validateArray = function (arr, resultRef)
-{
-	var result = typeof resultRef === 'object' ?  resultRef:{};
-	var v;
-	
-	result.invalid = {};
-	result.valid =  {};
-	
-	if (!utilNode.isArray(arr))
-	{
-		result.invalid['arrayType'] = true
-		result.isInvalid = true;
-	}
-	
-	for (var i in this.validators)
-	{
-		for (var j = 0, l = arr.length; j<l; j++)
-		{
-			try
-			{
-				this.validators[i].validate(arr[j]);
-			}
-			catch (error)
-			{
-				console.log (error);
-				result.invalid[i] = true;
-				result.isInvalid = true;
-				break;
-			}
-		}
-		if (!result.invalid[i]) result.valid[i] = true;
-	}
-
-	if (!result.hasOwnProperty ('isInvalid'))
-	{
-		result.isValid = true;
-		result.isInvalid = false;
-	}
-	return resultRef ? result.isValid : result;
-};
+module.exports = ValidationPool;

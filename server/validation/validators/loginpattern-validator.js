@@ -14,4 +14,7 @@ LoginPatternValidator.prototype.rule = function (val)
 LoginPatternValidator.prototype.errorCode = 101;
 LoginPatternValidator.prototype.errorMessage = "login must contain only alphanumerical or digits";
 
+LoginPatternValidator.restricTo = ['string'];
+
+
 validators.loginpattern = module.exports = exports = new LoginPatternValidator();

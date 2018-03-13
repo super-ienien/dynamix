@@ -10,9 +10,7 @@ module.exports = exports = Validator;
 Validator.prototype.errorCode = 0;
 Validator.prototype.errorMessage = '';
 Validator.prototype.type = "any";
-
 Validator.prototype.rule = function () {return true;};
-
 
 Validator.prototype.validate = function (val)
 {
@@ -24,12 +22,21 @@ Validator.prototype.validate = function (val)
 	{
 		return true;
 	}
-}
+};
+
+Validator.prototype.validateArray = function (arr)
+{
+	for (let i = 0, l = arr.length; i<l; i++)
+	{
+		this.validate(arr[i]);
+	}
+	return true;
+};
 
 Validator.inherits = function (constructor)
 {
 	inheritor.inherits (constructor, Validator);
 	constructor.prototype.type = constructor.name.toLowerCase().slice(0,-9);
-}
+};
 
 validators.any = new Validator();

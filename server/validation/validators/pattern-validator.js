@@ -19,4 +19,6 @@ PatternValidator.prototype.errorMessage = function (val)
 	val+" doesn't match pattern : '"+this.pattern+"'";
 }
 
+PatternValidator.restricTo = ['string'];
+
 validators.pattern = module.exports = exports = PatternValidator;
