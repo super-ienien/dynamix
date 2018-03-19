@@ -32,7 +32,7 @@ function RemoteSocket (socket)
 	
 	this._syncRequestHandlers = {};
 	
-	this.registerInstance(socket.user);
+	this.link(socket.user);
 
 	this.query = socket.handshake.query;
 }
@@ -81,7 +81,7 @@ RemoteSocket.prototype._ioSyncProcessResult = function (instances)
 	debug ('process sync handler');
 	for (var i in instances)
 	{
-		this.registerInstance(instances[i]);
+		this.link(instances[i]);
 		json.push(instances[i].toJSON (this.user));
 	}
 	return json;
@@ -99,7 +99,7 @@ function _ioUpdateRequestHandler (type, id)
 		instance = cache.exists (type, id[i]);
         if (instance)
         {
-            this.registerInstance(instance);
+            this.link(instance);
             result.push(instance.toJSON(this.user));
         }
         else
@@ -544,14 +544,14 @@ RemoteSocket.prototype.hasInstance = function(instance)
 	return this.instances.hasOwnProperty(this.instanceId(instance));
 };
 
-RemoteSocket.prototype.registerInstance = function(instance)
+RemoteSocket.prototype.link = function(instance)
 {
     if (!instance) return;
 	if (this.hasInstance(instance)) return false;
 	var instanceId = this.instanceId(instance);
 	instance._remoteSockets[this.id] = this;
 	this.instances[instanceId] = instance;
-	this._instancesDestroyHandlers[instanceId] = this.unregisterInstance.bind(this, instance);
+	this._instancesDestroyHandlers[instanceId] = this.unlink.bind(this, instance);
 	instance.on ('destroy', this._instancesDestroyHandlers[instanceId]);
 	var collection;
     for (var i in instance.__remotedProps)
@@ -561,18 +561,18 @@ RemoteSocket.prototype.registerInstance = function(instance)
             collection = instance[instance.__remotedProps[i].name];
             for (var j in collection.list)
             {
-                this.registerInstance(collection.list[j]);
+                this.link(collection.list[j]);
             }
         }
         else
         {
-            this.registerInstance(instance.__remotedProps[i].accessor ? instance[i]():instance[i]);
+            this.link(instance.__remotedProps[i].accessor ? instance[i]():instance[i]);
         }
 	}
 	return true;
 };
 
-RemoteSocket.prototype.unregisterInstance = function(instance)
+RemoteSocket.prototype.unlink = function(instance)
 {
 	if (!this.hasInstance(instance)) return false;
 	var instanceId = this.instanceId(instance);
@@ -583,7 +583,7 @@ RemoteSocket.prototype.unregisterInstance = function(instance)
 	return true;
 }
 
-RemoteSocket.prototype.unregisterAllInstances = function()
+RemoteSocket.prototype.unlinkAll = function()
 {
 	for (var i in this.instances)
 	{
@@ -651,7 +651,7 @@ RemoteSocket.prototype.kill = function ()
 RemoteSocket.prototype.destroy = function ()
 {
 	this.connected = false;
-	this.unregisterAllInstances();
+	this.unlinkAll();
 	this._emitter.emit('disconnect', this);
 	this.socket.removeAllListeners();
 	this._emitter.removeAllListeners();

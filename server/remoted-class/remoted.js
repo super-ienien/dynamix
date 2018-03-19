@@ -22,6 +22,8 @@ class Remoted extends EventEmitter {
         super();
         this.setMaxListeners(200);
 
+        this[privates.externalId] = this.__static.name + '.' + this._id;
+
         /**
          * Wether the instance is initialized or not
          * @member {boolean}
@@ -39,18 +41,35 @@ class Remoted extends EventEmitter {
         }
 
         //Création des propriétés privées;
-		this[privates.timeouts] = {};
-		this[privates.intervals] = {};
-		this[privates.immediates] = {};
+		this[privates.timeouts] = null;
+		this[privates.intervals] = null;
+		this[privates.immediates] = null;
 		this[privates.parents] = new Set();
-		this[privates.domains] = {};
-		this[privates.promises] = {};
-		this[privates.deferreds] = {};
+		this[privates.domains] = null;
+		this[privates.promises] = null;
+		this[privates.deferreds] = null;
         this[privates.saveQueue] = new Map();
 		this[privates.init](data);
 
 		//binds
         this[privates.removeParent] = this[privates.removeParent].bind(this);
+    }
+
+    toJSON () {
+        return this.toObject();
+    }
+
+    toString () {
+        return this[privates.externalId];
+    }
+
+    /**
+     *
+     * @returns {Connection}
+     */
+    $getCaller ()
+    {
+        return this[privates.externalCaller];
     }
 
     /**
@@ -80,29 +99,41 @@ class Remoted extends EventEmitter {
         // Destroy instance of this object on every connected clients
         Remote.destroy(this);
 
-        for (let i in this[privates.deferreds])
+        if (this[privates.deferreds])
         {
-            if (!this[privates.deferreds][i]) continue;
-            this[privates.deferreds][i].reject(`${i} aborted, because object was destroyed`);
-        }
-        this[privates.deferreds] = null;
-
-        for (let i in this[privates.immediates])
-        {
-            if (!this[privates.immediates][i]) continue;
-            clearImmediate(this[privates.immediates][i]);
+            for (let i in this[privates.deferreds])
+            {
+                if (!this[privates.deferreds][i]) continue;
+                this[privates.deferreds][i].reject(`${i} aborted, because object was destroyed`);
+            }
+            this[privates.deferreds] = null;
         }
 
-        for (let i in this[privates.intervals])
+        if (this[privates.immediates])
         {
-            if (!this[privates.intervals][i]) continue;
-            clearInterval(this[privates.intervals][i]);
+            for (let i in this[privates.immediates])
+            {
+                if (!this[privates.immediates][i]) continue;
+                clearImmediate(this[privates.immediates][i]);
+            }
         }
 
-        for (let i in this[privates.timeouts])
+        if (this[privates.intervals])
         {
-            if (!this[privates.timeouts][i]) continue;
-            clearInterval(this[privates.timeouts][i]);
+            for (let i in this[privates.intervals])
+            {
+                if (!this[privates.intervals][i]) continue;
+                clearInterval(this[privates.intervals][i]);
+            }
+        }
+
+        if (this[privates.timeouts])
+        {
+            for (let i in this[privates.timeouts])
+            {
+                if (!this[privates.timeouts][i]) continue;
+                clearInterval(this[privates.timeouts][i]);
+            }
         }
 
         for (let parent of this[privates.parents])
@@ -171,7 +202,6 @@ class Remoted extends EventEmitter {
         return dynamixToObject(this, map, user, protectFromCircularReferences, circularMap, path);
     };
 
-
     //PRIVATE METHODS
     [privates.addParent] (parent)
     {
@@ -203,10 +233,9 @@ class Remoted extends EventEmitter {
             this[privates.deferreds].save = helpers.defer();
 		}
 
-
         this[privates.immediates] = setImmediate(()=>
         {
-            if (this.destroyed) return;
+            if (this.$destroyed) return;
             let fields = Array.from(this[privates.saveQueue].keys());
             for (let i = fields.length-1; i>=0; i--)
             {
@@ -224,7 +253,7 @@ class Remoted extends EventEmitter {
 				.reflect()
 				.then ((inspect) =>
 				{
-                    if (this.destroyed) return;
+                    if (this.$destroyed) return;
                     this[privates.promises].save = null;
 
                     if (inspect.isFulfilled())
@@ -254,9 +283,6 @@ class Remoted extends EventEmitter {
         return this[privates.deferreds].save;
     }
 }
-
-Securized.implements (Remoted);
-exports = module.exports = Remoted;
 
 function dynamixToObject (obj, map, user, protectFromCircularReferences, circularMap, path)
 {
@@ -399,714 +425,7 @@ function getPropsMap (dynamix, fields)
 }
 
 
-var BaseObject = require('../helpers/baseobject')
-,   util = require('util')
-,   helpers = require('../helpers/util')
-,   RemotedError = require('./remoted-error')
-,   Remote = require('./remote')
-,   cache = require('./cache')
-,   debug = util.debuglog ('remote')
-,   mongoose = require ('mongoose')
-,   Schema = mongoose.Schema
-,   mongooseAdapter = require ('./mongoose-adapter')
-,   ValidationPool = require ('../validation/validation-pool')
-,   RemotedCollection = require ('./remoted-collection')
-,	NotFoundError = require ('../helpers/errors/not-found-error')
-,	_ = require ('lodash/core')
-,   uuid= require('uuid');
-
-
-
-
-function _updateMappedObject (data, object, map)
-{
-	
-	if (typeof data != 'object') return;
-	if (typeof map != 'object') return;
-	var prop;
-	for (var i in map)
-	{
-		prop = map[i];
-		switch (prop.propType)
-		{
-			case 'property':
-				object[prop.name] = data[i];
-			break;
-			case 'mapped-object':
-			if (prop.array)
-				{
-					object[prop.name] = [];
-					if (util.isArray(data[i]))
-					{
-						for (var j = 0, l = data[i].length; j<l; j++)
-						{
-							object[prop.name][j] = {};
-							_updateMappedObject (data[i][j], object[prop.name][j], prop.map);
-						}
-					}
-				}
-				else
-				{
-					_updateMappedObject (data[i], object[prop.name], prop.map);
-				}
-			break;
-		}
-	}
-}
-
-Remoted.prototype.remoteUpdate = function (fields, socket)
-{
-
-};
-
-Remoted.prototype.remoteExecute = function (method, socket, remotedInstance)
-{
-	debug ('remote execute : '+method+'()');
-	if (this.__reverseMap[method].propType == 'remoted' && this.__reverseMap[method].accessor)
-	{
-		Remote.executeRemotedAccessor.apply (Remote, [this, method, socket, remotedInstance]);
-	}
-	else
-	{
-		Remote.execute.apply (Remote, [this, method, socket].concat (Array.prototype.slice.call(arguments, 2)));
-	}
-};
-
-Remoted.prototype._init = function (obj)
-{
-	var self = this;
-	var resInit;
-
-	obj = obj || {};
-
-	try
-	{
-		if (typeof obj.__dataAdapter__ === 'string' && this.__dataAdapters.hasOwnProperty(obj.__dataAdapter__))
-		{
-			obj = this.__dataAdapters[obj.__dataAdapter__](obj);
-		}
-		if (typeof this.preInit === 'function')
-		{
-			resInit = this.preInit(obj);
-			if (resInit instanceof Promise)
-			{
-				return resInit.then (function(r)
-				{
-					r = r || obj;
-					return self._runInit(r);
-				})
-				.catch (function (error)
-				{
-					self.initializeComplete (false, error);
-				});
-			}
-			else if (typeof resInit !== 'object')
-			{
-				resInit = obj;
-			}
-		}
-		else
-		{
-			resInit = obj;
-		}
-		this._runInit(resInit);
-	}
-	catch(e)
-	{
-		self.initializeComplete (false, e);
-	}
-};
-
-function initializeDynamix (obj)
-{
-	var remotedPromisesHash = {};
-	var remotedPromisesArray;
-	var hasRemoted = false;
-    var obj = obj || {};
-	var needSave = false;
-
-	let circularRemotedMap = new Set (obj.__circularRemotedMap__);
-	circularRemotedMap.add(this);
-
-	for (let i in this.__map)
-	{
-		let val;
-		let prop = this.__map[i];
-		let propName = prop.accessor ? '_'+prop.name : prop.name;
-		let notFound = false;
-		if (prop.array)
-		{
-            switch (prop.propType)
-            {
-                case 'property':
-                    if (obj.hasOwnProperty (i))
-                    {
-                        val = obj[i];
-                    }
-                    else if (obj.hasOwnProperty (prop.name))
-                    {
-                        val = obj[prop.name];
-                    }
-                    if (util.isArray (val))
-                    {
-                        this[propName] = [];
-                        for (let j = 0, l = val.length; j < l; j++)
-                        {
-                            this[propName].push(this._initProcessProperty(prop, val[j]));
-                        }
-                    }
-                    else
-                    {
-                        notFound = true;
-                    }
-                break;
-                case 'remoted':
-                    let ids = obj[i + '_ids'] || obj[prop.name + 'ids'];
-                    if (!util.isArray(ids))
-                    {
-                        val = obj[i] || obj[prop.name];
-                        if (util.isArray(val))
-                        {
-                            ids = [];
-							for (let j = 0, l = val.length; j < l; j++)
-							{
-								if (val[j]._id && val[j].__static) ids.push({id: val[j]._id, type: val[j].__static.name});
-								else if (val[j]._id && val[j].__type__) ids.push({id: val[j]._id, type: val[j].__type__});
-							}
-						}
-					}
-					else
-					{
-						for (let j = 0, l = ids.length; j<l; j++)
-						{
-							if (typeof ids[j] !== 'object')
-							{
-								ids[j] = {id: ids[j], type: prop.type};
-							}
-							else if (ids[j] && !ids[j].type)
-							{
-								ids[j] = {id: ids[j], type: prop.type};
-							}
-						}
-					}
-                    if (util.isArray(ids) && ids.length)
-                    {
-                        remotedPromisesArray = [];
-						for (let j = 0, l = ids.length; j<l; j++)
-                        {
-							hasRemoted = true;
-							let type = cache.getType(ids[j].type);
-							if (!type) continue;
-							remotedPromisesArray.push(
-								type._getById(ids[j].id, circularRemotedMap)
-								.then(function (instance)
-								{
-									if (circularRemotedMap.has(instance)) return instance;
-									return instance.initialize();
-								})
-								.reflect()
-							);
-						}
-
-						remotedPromisesHash[propName] = Promise.bind(this[prop.name], remotedPromisesArray)
-						.filter(function (instanceInspection)
-						{
-							if (instanceInspection.isFulfilled())
-							{
-								return true;
-							}
-							else
-							{
-								let error = instanceInspection.reason();
-								console.error('in ' + this.parent.__static.name);
-								console.error(error);
-								if (error instanceof NotFoundError)
-								{
-									this.parent.model[this.persistentPath].remove(error.search);
-									this.parent.save(this.persistentPath);
-								}
-								return false;
-							}
-						})
-						.each(function (instanceInspection)
-						{
-							this.add(instanceInspection.value())
-						})
-						.catch(function (error)
-						{
-							console.error ('some instance was not initialized in '+this.parent.__static.name);
-							console.error (error.stack);
-						})
-                    }
-                    notFound = false; /* TODO : à checker */
-                break;
-                case 'mapped-object':
-                    if (obj.hasOwnProperty (i))
-                    {
-                        val = obj[i];
-                    }
-                    else if (obj.hasOwnProperty (prop.name))
-                    {
-                        val = obj[prop.name];
-                    }
-                    if (util.isArray (val))
-                    {
-                        let arr = [];
-                        for (let j = 0, l = val.length; j < l; j++)
-                        {
-                            let obj = {};
-                            _updateMappedObject(val[j], obj, prop.map);
-                            arr[j] = obj;
-                        }
-                        this[propName] = arr;
-                    }
-                    else
-                    {
-                        notFound = true;
-                    }
-                break;
-            }
-		}
-		else
-		{
-			switch (prop.propType)
-			{
-				case 'property':
-					if (obj.hasOwnProperty (i))
-                    {
-                        this[propName] = this._initProcessProperty (prop, obj[i]);
-                    }
-                    else if (obj.hasOwnProperty (prop.name))
-                    {
-                        this[propName] = this._initProcessProperty (prop, obj[prop.name]);
-                    }
-					else	if (this.__static.virtual && prop.hasOwnProperty('default'))
-					{
-						this[propName] = this._resolveDefaultProperty(prop, prop.default, obj);
-					}
-					else notFound = true;
-				break;
-				case 'remoted':
-					let instance;
-					let id;
-					let type;
-					if (obj[prop.name] && typeof obj[prop.name] === 'object' && obj[prop.name].isRemoted) /* TODO : check type */
-					{
-						instance = obj[prop.name].initialize();
-						obj[prop.name+'_id'] = obj[prop.name]._id;
-					}
-					else
-					{
-						if (obj.hasOwnProperty (i+'_id'))
-						{
-							id = obj[i+'_id'];
-						}
-						else if (obj.hasOwnProperty (prop.name+'_id'))
-						{
-							id = obj[prop.name+'_id'];
-						}
-						else if (typeof obj[i] === 'object' && obj[i].hasOwnProperty('_id'))
-						{
-							id = obj[i]._id;
-						}
-						else if (obj[prop.name] && typeof obj[prop.name] === 'object')
-						{
-							if (obj[prop.name]._id)
-							{
-								id = obj[prop.name]._id;
-							}
-							else if (typeof prop.type === 'function')
-							{
-								instance = prop.type.create(obj[prop.name]);
-								if (!this.__static.virtual) needSave = true
-							}
-							else if (obj[prop.name].__type__)
-							{
-								let type = cache.getType(obj[prop.name].__type__);
-								if (type && this.isValidPropertyTypeFor(prop.name, type))
-								{
-									instance = type.create(obj[prop.name]);
-									if (!this.__static.virtual) needSave = true
-								}
-							}
-						}
-						else if (prop.default)
-						{
-							instance = this._resolveDefaultRemoted(prop, obj);
-							if (instance && !this.__static.virtual) needSave = true;
-						}
-
-						if (id)
-						{
-							if (typeof id !== 'object')
-							{
-								id = {id: id, type: prop.type};
-							}
-							else if (!id.type)
-							{
-								id = {id: id, type: prop.type};
-							}
-
-							obj[prop.name+'_id'] = id.id;
-
-							type = cache.getType(id.type);
-
-							instance = type._getById(id.id, circularRemotedMap)
-							.then (function(instance)
-							{
-								if (circularRemotedMap.has(instance)) return instance;
-								return instance.initialize();
-							});
-						}
-					}
-
-					if (instance)
-					{
-						hasRemoted = true;
-						remotedPromisesHash[propName] = instance
-                        .bind({
-                            name: prop.accessor ? '_'+prop.name:prop.name
-                        ,   self: this
-                        ,   prop: prop
-						,	type: type
-                        })
-                        .catch(NotFoundError, function (e)
-                        {
-                            if (this.prop.default)
-							{
-								let p = this.self._resolveDefaultRemoted(this.prop, obj, this.type);
-								if (p && !this.__static.virtual) needSave = true;
-								return p;
-							}
-							else
-							{
-								console.error (e);
-							}
-                        })
-						.catch (function (e)
-						{
-							console.error (prop.name+ ' is not initialized in '+this.self.__static.name);
-							console.error (e);
-						})
-						.then (function (instance)
-                        {
-                            if (instance)
-                            {
-                                this.self[this.name] = instance;
-                                if (this.prop.inheritedParent) instance.parent = this.self;
-                                if (this.prop.inheritedOwner) instance.chown(this.self.owner());
-                            }
-                            else if (this.prop.required) throw new Error ('property : "'+this.name+'" is required');
-                            else this.self[this.name] = null;
-                        });
-					}
-                    else
-                    {
-                        notFound = true;
-                    }
-				break;
-				case 'mapped-object':
-					if (!this[propName] && prop.default) this[propName] = this._resolveDefaultProperty(prop, prop.default, obj);
-					if (typeof this[propName] != 'object') this[propName] = {};
-					_updateMappedObject (obj[i] || obj[prop.name], this[prop.name], prop.map);
-				break;
-			}
-		}
-		if (notFound && prop.required)
-		{
-			this.initializeComplete (false, new Error ('property : "'+prop.name+'" is required'));
-			return;
-		}
-	}
-	if (hasRemoted)
-	{
-		Promise.props (remotedPromisesHash)
-		.bind(this)
-		.then (function ()
-		{
-			if (needSave) this.save();
-			this._resolveInit(obj);
-		})
-		.catch (function (error)
-		{
-			this.initializeComplete (false, error);
-		});
-	}
-	else
-	{
-		this._resolveInit(obj);
-	}
-}
-
-function resolveDefaultProperty (prop, val, obj)
-{
-	switch (typeof val)
-	{
-		case 'object':
-			if (!val) return null;
-			return _.cloneDeep(val);
-		break;
-		case 'function':
-            if (val === Date) return new Date();
-            if (val === Object) return {};
-            if (val === Array) return [];
-			return prop.default.call(this, obj[prop.name] || obj[prop.jsonName], obj);
-		break;
-		default:
-			return val;
-	}
-};
-
-function resolveDefaultRemoted (prop, obj, type)
-{
-    var data;
-	type = cache.getType(type) || prop.type;
-    switch (typeof prop.default)
-    {
-        case 'function':
-            data = prop.default.call(this, obj[prop.name] || obj[prop.jsonName], obj);
-            if (data instanceof Promise)
-            {
-                return data
-				.bind(prop)
-				.then(function (r)
-                {
-                    if (r instanceof Remoted)
-                    {
-                        return r;
-                    }
-                    else if (r && typeof r === 'object' && typeof type === 'function')
-                    {
-                        return type.getOneOrCreate(r);
-                    }
-                });
-            }
-            else if (typeof type === 'function')
-            {
-                return data !== null ? type.getOneOrCreate(data) : null;
-            }
-            break;
-        case 'object':
-            if (typeof type === 'function') return type.getOneOrCreate(prop.default);
-            break;
-    }
-};
-
-Remoted.prototype._initProcessProperty = function (prop, obj)
-{
-	if (prop.hasOwnProperty ('type') && !(obj instanceof prop.type))
-	{
-		if (prop.type !== Boolean) return new prop.type(obj);
-	}
-	return obj;
-};
-
-Remoted.prototype._resolveInit = function (obj)
-{
-	if (typeof this.init == 'function')
-	{
-		try
-		{
-			var resInit = this.init(obj);
-		}
-		catch (e)
-		{
-			return this.initializeComplete (false, e);
-		}
-		if (resInit instanceof Promise)
-		{
-			resInit
-			.bind(this)
-			.then (function()
-			{
-                return this.initializeComplete (true);
-                if (typeof this.postInit === 'function') this.postInit();
-			})
-			.catch (function (error)
-			{
-				this.initializeComplete (false, error);
-			});
-		}
-		else if (resInit == undefined || resInit === true)
-		{
-			this.initializeComplete (true);
-			if (typeof this.postInit === 'function') this.postInit();
-		}
-		else
-		{
-			return this.initializeComplete (false, resInit);
-		}
-	}
-	else
-	{
-		return this.initializeComplete (true);
-		if (typeof this.postInit === 'function') this.postInit();
-	}
-};
-
-
-Remoted.prototype.toJSON = function (props, user, circularMap, path)
-{
-	if (!this.__reverseMap) return {};
-	var map;
-	if (util.isArray(props) || typeof props == 'string')
-	{
-		if (typeof props == 'string') props = [props];
-		map = {};
-		for (var i = 0, l = props.length; i<l; i++)
-		{
-			if (this.__reverseMap.hasOwnProperty(props[i]))
-			{
-				map[props[i]] = this.__reverseMap[props[i]];
-			}
-		}
-	}
-	else
-	{
-		path = circularMap;
-		circularMap = user;
-		user = props;
-		map = this.__reverseMap;
-	}
-	return this._toJSONMapping (this, map, user, circularMap, path);
-};
-
-Remoted.prototype._toJSONMapping = function (obj, map, user, circularMap, path)
-{
-	path = path || '';
-	circularMap = new Map(circularMap);
-	circularMap.set(obj, path);
-
-	var json = {};
-	if (obj.__static)
-	{
-		json.__type__= obj.__static.name;
-	}
-	var propertyName;
-	var prop;
-	var val;
-
-	if (typeof obj == 'function')
-	{
-		obj = obj();
-	}
-	if (typeof obj != 'object') return json;
-	for (propertyName in map)
-	{
-		if (typeof obj[propertyName] === 'undefined') continue;
-		
-		prop = map[propertyName];
-		if (prop.private) continue;
-		if (user && !this.isAllowed (propertyName, 'r', user))
-		{
-			continue;
-		}
-		
-		val = prop.accessor ? obj['_'+propertyName] : obj[propertyName];
-		
-		switch (prop.propType)
-		{
-			case 'property':
-				json[prop.jsonName] = val;
-			break;
-			case 'remoted':
-			case 'mapped-object':
-				if (prop.array)
-				{
-					if (util.isArray (val))
-					{
-						json[prop.jsonName] = [];
-						if (map[propertyName].hasOwnProperty ('map'))
-						{
-							for (let j = 0, l = val.length; j<l; j++)
-							{
-								json[prop.jsonName].push (this._toJSONMapping (val[j], prop.reverseMap));
-							}
-						}
-						else if (prop.propType === 'remoted')
-						{
-							json[prop.jsonName] = [];
-							for (var j = 0, l = val.length; j<l; j++)
-							{
-								if (typeof val[j].toJSON === 'function')
-								{
-									if (circularMap.has(val[j]))
-									{
-										json[prop.jsonName].push(circularMap.get(val[j]));
-									}
-									else
-									{
-										json[prop.jsonName].push(val[j].toJSON(user, circularMap, path + (path ? '.':'') + propertyName + '.' + j));
-									}
-								}
-								else
-								{
-									console.error ('toJSON is not a function for property : "'+propertyName+'", cannot convert object to JSON');
-								}
-							}
-						}
-					}
-				}
-				else
-				{
-					if (!val)
-					{
-						json[prop.jsonName] = null;
-					}
-					else if (map[propertyName].hasOwnProperty ('map'))
-					{
-						json[prop.jsonName] = this._toJSONMapping (val, map[propertyName].reverseMap);
-					}
-					else if (typeof val.toJSON == 'function')
-					{
-						if (circularMap.has(val))
-						{
-							json[prop.jsonName].push(circularMap.get(val));
-						}
-						else
-						{
-							json[prop.jsonName] = val.toJSON(user, circularMap, path + (path ? '.':'') + propertyName);
-						}
-					}
-				}
-			break;
-		}
-	}
-	return json;
-};
-
-Remoted.prototype.hasValidPropertyTypeFor = function (propName, instance)
-{
-	let type = this.__map[propName].type;
-	switch (typeof type)
-	{
-		case 'string':
-			return type === instance.__static.name;
-			break;
-		case 'function':
-			return type === instance.__static;
-			break;
-		case 'object':
-			if (Array.isArray(type))
-			{
-				for (let i = 0, l = type.length; i<l; i++)
-				{
-					if (type[i] === instance.__static) return true;
-				}
-			}
-		default:
-			return false;
-	}
-};
-
-Remoted.prototype.destroy = function ()
-{
-	//console.log ('REMOTED DESTROY : '+this.__static.name);
-	Remote.destroy(this);
-	return Remoted.__super.prototype.destroy.call(this);
-};
-
-
+// STATIC
 Remoted.create = function (data)
 {
 	var instance = cache.exists (this, data);

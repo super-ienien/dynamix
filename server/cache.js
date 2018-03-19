@@ -11,7 +11,7 @@ module.exports = exports = {
 ,   exists
 ,   get
 ,   getBy
-,   getFromString
+,   getByExternalId
 ,   getOneBy
 ,   getOneByOrCreate
 ,   getType
@@ -153,11 +153,12 @@ function getBy (type, search)
     return Array.from(results);
 }
 
-function getFromString (idStr)
+function getByExternalId (externalId)
 {
-    let splitted = idStr.split('.');
+    if (typeof externalId !== 'string') return null;
+    let splitted = externalId.split('.');
     if (splitted.length !== 2 || !cache.has(splitted[0])) return null;
-    return getOneBy(splitted[0], splitted[1]);
+    return exists (splitted[0], splitted[1]);
 }
 
 function getOneBy (type, search)

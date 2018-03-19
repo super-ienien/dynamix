@@ -4,6 +4,7 @@ const _ = require ('lodash')
 
 module.exports = {
     inspectPromise
+,   parseCookies
 ,   parseIdString
 ,	rundown
 };
@@ -12,6 +13,18 @@ function inspectPromise (promise)
 {
     return Promise.resolve(promise).then((value) => { return {isFulfilled: true, isRejected: false, value}})
     .catch((reason) => { return {isFulfilled: false, isRejected: true, reason}});
+}
+
+function parseCookies(rc)
+{
+    var list = {};
+
+    rc && rc.split(';').forEach(function( cookie )
+    {
+        var parts = cookie.split('=');
+        list[parts.shift().trim()] = unescape(parts.join('='));
+    });
+    return list;
 }
 
 function parseIdString(idStr) {
@@ -51,24 +64,6 @@ function rundown (steps, context, i = 0)
 
     if (i > 0) return r;
     else Promise.resolve(r);
-}
-
-
-
-
-
-
-
-exports.parseCookies = function (rc)
-{
-	var list = {};
-
-	rc && rc.split(';').forEach(function( cookie ) 
-	{
-		var parts = cookie.split('=');
-		list[parts.shift().trim()] = unescape(parts.join('='));
-	});
-	return list;
 }
 
 exports.sqlDateTime = function (date)

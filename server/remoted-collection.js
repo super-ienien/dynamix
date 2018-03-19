@@ -338,7 +338,7 @@ RemotedCollection.prototype._insert = function (instance, index, replace, mute)
         if (this.onAdded) this.onAdded(instance);
         for (var i in this.parent._remoteSockets)
         {
-            this.parent._remoteSockets[i].registerInstance(instance);
+            this.parent._remoteSockets[i].link(instance);
         }
     }
     return ret;

@@ -1,118 +1,113 @@
-var util = require("util")
-  ,  cache = require("./cache")
-  ,  events = require("events");
+const privates = require ('./privates');
+const cache = require("./cache");
+const EventEmitter = require("events");
   
-var debug = util.debuglog ('remote');
+const debug = require('util').debuglog ('remote');
 
-function Remote ()
+class Remote extends EventEmitter
 {
-	events.EventEmitter.call(this);
-	this._pendingCreateOperations = {};
-    this._flushCreateOperations = this._flushCreateOperations.bind(this);
-}
+	constructor()
+	{
+		super();
+        this.pendingCreateOperations = new Set();
+        this.flushCreateOperations = this._flushCreateOperations.bind(this);
+	}
 
-util.inherits(Remote, events.EventEmitter);
-
-/**
-* @param {string} type
-* @param {string} id
-* @param {string} method
-**/
-
-Remote.prototype.create = function (instance, socket)
-{
-    var id = instance.__static.name + '-' + instance._id;
-    if (this._pendingCreateOperations.hasOwnProperty(id))
+    create (instance, socket)
     {
-        if (socket) this._pendingCreateOperations[id].socket = socket;
-        return;
+        const id = instance.__static.name + '-' + instance._id;
+        if (this.pendingCreateOperations.hasOwnProperty(id))
+        {
+            if (socket) this.pendingCreateOperations[id].socket = socket;
+            return;
+        }
+        this.pendingCreateOperations[id] = {socket: socket, instance: instance};
+        setTimeout(this._flushCreateOperations);
     }
-    this._pendingCreateOperations[id] = {socket: socket, instance: instance};
-    setTimeout(this._flushCreateOperations);
-};
 
-Remote.prototype._flushCreateOperations = function ()
-{
-    for (var i in this._pendingCreateOperations)
+    _create (instance, socket)
     {
-        this._create(this._pendingCreateOperations[i].instance, this._pendingCreateOperations[i].socket);
+        var type = instance.__static.name;
+        var jsons = {};
+        var json;
+        var userType;
+        var iSocket;
+
+        if (!cache.isRegistered (type)) throw new Error (type + ' is not a registered Type');
+
+        debug('remote create : '+ type+ ' with id : '+instance._id);
+
+        for (const connection of instance[privates.connections])
+        {
+            iSocket = connection;
+            if (socket && iSocket == socket) continue;
+            userType = instance.userIs (iSocket.user);
+            json = jsons[userType] || (jsons[userType] = instance.toJSON (iSocket.user));
+            iSocket.emit ('remote-create', type, json);
+        }
     }
-    this._pendingCreateOperations = {};
-};
 
-Remote.prototype._create = function (instance, socket)
-{
-	var type = instance.__static.name;
-	var jsons = {};
-	var json;
-	var userType;
-	var iSocket;
-	
-	if (!cache.isRegistered (type)) throw new Error (type + ' is not a registered Type');
+    flushCreateOperations ()
+    {
+        for (var i in this.pendingCreateOperations)
+        {
+            this._create(this.pendingCreateOperations[i].instance, this.pendingCreateOperations[i].socket);
+        }
+        this.pendingCreateOperations = {};
+    }
 
-	debug('remote create : '+ type+ ' with id : '+instance._id);
-	
-	for (var i in instance._remoteSockets)
-	{
-		iSocket = instance._remoteSockets[i];
-		if (socket && iSocket == socket) continue;
-		userType = instance.userIs (iSocket.user);
-		json = jsons[userType] || (jsons[userType] = instance.toJSON (iSocket.user));
-		iSocket.emit ('remote-create', type, json);
-	}
-};
+    update (instance, fields, socket)
+    {
+        var type = instance.__static.name;
+        var jsons = {};
+        var json;
+        var userType;
+        var iSocket;
 
-Remote.prototype.update = function (instance, fields, socket)
-{
-	var type = instance.__static.name;
-	var jsons = {};
-	var json;
-	var userType;
-	var iSocket;
-	
-	if (!cache.isRegistered (type)) throw new Error (type + ' is not a registered Type');
-	
-	debug ('remote update : '+ type+ ' with id : '+cache.idOf (instance));
-	
-	for (var i in instance._remoteSockets)
-	{
-		iSocket = instance._remoteSockets[i];
-		if (socket && iSocket === socket) continue;
-	
-		userType = instance.userIs (iSocket.user);
-		json = jsons[userType] || (jsons[userType] = instance.toJSON (fields, iSocket.user));
-		iSocket.emit ('remote-update', type, json);
-	}
+        if (!cache.isRegistered (type)) throw new Error (type + ' is not a registered Type');
+
+        debug ('remote update : '+ type+ ' with id : '+cache.idOf (instance));
+
+        for (const connection of instance[privates.connections])
+        {
+            iSocket = connection;
+            if (socket && iSocket === socket) continue;
+
+            userType = instance.userIs (iSocket.user);
+            json = jsons[userType] || (jsons[userType] = instance.toJSON (fields, iSocket.user));
+            iSocket.emit ('remote-update', type, json);
+        }
+    }
+
+    execute (instance, method, socket)
+    {
+        var type = instance.__static.name;
+
+        if (!cache.isRegistered (type)) throw new Error (type + ' is not a registered Type');
+
+        debug ('remote execute '+method+'() on '+ type);
+        for (const connection of instance[privates.connections])
+        {
+            if (socket && socket === connection) continue;
+            connection.emit.apply(connection, ['remote-execute', type, cache.idOf (instance), method].concat(Array.prototype.slice.call(arguments, 3)));
+        }
+    }
+
+    destroy (instance)
+    {
+        var type = instance.__static.name;
+
+        if (!cache.isRegistered (type)) throw new Error (type + ' is not a registered Type');
+
+        debug ('remote destroy '+ type + ' : '+ instance._id);
+        
+        for (const connection of instance[privates.connections])
+        {
+            connection.emit('remote-destroy', instance.__static.name, cache.idOf(instance));
+            connection.unlink(instance);
+        }
+    }
 }
-
-Remote.prototype.destroy = function (instance)
-{
-	var type = instance.__static.name;
-	
-	if (!cache.isRegistered (type)) throw new Error (type + ' is not a registered Type');
-	
-	debug ('remote destroy '+ type + ' : '+ instance._id);
-	
-	for (var i in instance._remoteSockets)
-	{
-        instance._remoteSockets[i].emit('remote-destroy', instance.__static.name, cache.idOf(instance));
-        instance._remoteSockets[i].unregisterInstance(instance);
-	}
-};
-
-Remote.prototype.execute = function (instance, method, socket)
-{
-	var type = instance.__static.name;
-	
-	if (!cache.isRegistered (type)) throw new Error (type + ' is not a registered Type');
-	
-	debug ('remote execute '+method+'() on '+ type);
-	for (var i in instance._remoteSockets)
-	{
-		if (socket && socket === instance._remoteSockets[i]) continue;
-		instance._remoteSockets[i].emit.apply(instance._remoteSockets[i], ['remote-execute', type, cache.idOf (instance), method].concat(Array.prototype.slice.call(arguments, 3)));
-	}
-};
 
 Remote.prototype.executeRemotedAccessor = function (instance, method, socket, argument)
 {
@@ -125,9 +120,9 @@ Remote.prototype.executeRemotedAccessor = function (instance, method, socket, ar
 	if (!cache.isRegistered (type)) throw new Error (type + ' is not a registered Type');
 	
 	debug ('remote execute remoted accessor '+method+'() on '+ type);
-	for (var i in instance._remoteSockets)
+	for (const connection of instance[privates.connections])
 	{
-		iSocket = instance._remoteSockets[i];
+		iSocket = connection;
 		if (socket && socket === iSocket) continue;
 		if (argument === null)
 		{
@@ -168,9 +163,9 @@ Remote.prototype.executeCollectionMethod = function (instance, method, action, s
         case 'move':
             if (arguments.length < 5) return;
             var addedInstance = arguments[4];
-            for (let i in instance._remoteSockets)
+            for (let i in instance[privates.connections])
             {
-                iSocket = instance._remoteSockets[i];
+                iSocket = connection;
                 if (socket && iSocket == socket) continue;
                 userType = addedInstance.userIs(iSocket.user);
                 json = jsons[userType] || (jsons[userType] = addedInstance.toJSON(iSocket.user));
@@ -179,9 +174,9 @@ Remote.prototype.executeCollectionMethod = function (instance, method, action, s
         break;
 		case 'set':
 			let instances = arguments[4];
-			for (let i in instance._remoteSockets)
+			for (let i in instance[privates.connections])
 			{
-                iSocket = instance._remoteSockets[i];
+                iSocket = connection;
                 if (socket && iSocket === socket) continue;
                 json = instances.map((instance) =>
                 {
@@ -193,17 +188,17 @@ Remote.prototype.executeCollectionMethod = function (instance, method, action, s
 		break;
 		case 'remove':
 			let data = {_id: arguments[4]._id, __type__: arguments[4].__static.name};
-			for (let i in instance._remoteSockets)
+			for (let i in instance[privates.connections])
 			{
-				if (socket && socket === instance._remoteSockets[i]) continue;
-				instance._remoteSockets[i].emit.apply(instance._remoteSockets[i], ['remote-execute', type, cache.idOf(instance), method, action, data]);
+				if (socket && socket === connection) continue;
+				connection.emit.apply(connection, ['remote-execute', type, cache.idOf(instance), method, action, data]);
 			}
 		break;
         default:
-            for (let i in instance._remoteSockets)
+            for (let i in instance[privates.connections])
             {
-                if (socket && socket === instance._remoteSockets[i]) continue;
-                instance._remoteSockets[i].emit.apply(instance._remoteSockets[i], ['remote-execute', type, cache.idOf(instance), method].concat(Array.prototype.slice.call(arguments, 4)));
+                if (socket && socket === connection) continue;
+                connection.emit.apply(connection, ['remote-execute', type, cache.idOf(instance), method].concat(Array.prototype.slice.call(arguments, 4)));
             }
         break;
     }

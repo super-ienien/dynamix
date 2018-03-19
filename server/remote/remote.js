@@ -94,7 +94,7 @@ Remote.prototype.destroy = function (instance)
 	for (var i in instance._remoteSockets)
 	{
         instance._remoteSockets[i].emit('remote-destroy', instance.__static.name, cache.idOf(instance));
-        instance._remoteSockets[i].unregisterInstance(instance);
+        instance._remoteSockets[i].unlink(instance);
 	}
 };
 

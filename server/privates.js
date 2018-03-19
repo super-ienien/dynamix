@@ -1,11 +1,17 @@
 module.exports = {
     addParent: Symbol('addParent'),
-    collections: Symbol('collectionsProps'),
+    collections: Symbol('collections'),
+    collectionsMap: Symbol('collectionsMap'),
+    connections: Symbol('connections'),
     deferreds: Symbol('deferreds'),
     domains: Symbol('domains'),
+    externalId: Symbol('externalId'),
+    externalCaller: Symbol('externalCaller'),
     immediates: Symbol('immediates'),
     intervals: Symbol('intervals'),
     init: Symbol('init'),
+    map: Symbol('map'),
+    namespace: Symbol('namespace'),
     parents: Symbol('parents'),
     promises: Symbol('promises'),
     removeParent: Symbol('removeParent'),
@@ -13,5 +19,5 @@ module.exports = {
     startSaveCycle: Symbol('startSaveCycle'),
     store: Symbol('store'),
     timeouts: Symbol('timeouts'),
-    virtualStore: Symbol('virtualStore'),
+    virtualStore: Symbol('virtualStore')
 };

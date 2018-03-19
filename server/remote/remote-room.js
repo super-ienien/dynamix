@@ -112,7 +112,7 @@ RemoteRoom.prototype._autoRegister = function (type, addHandler, removeHandler, 
 
 RemoteRoom.prototype.autoRegisterHandler = function (addHandler, removeHandler, instance)
 {
-    this.registerInstance(instance);
+    this.link(instance);
     this._syncCache[instance.__static.name][instance._id] = instance;
     instance.once('destroy', this._removeFromSyncCache.bind(this));
     if (typeof addHandler === 'function') addHandler.call(this,instance);
@@ -125,7 +125,7 @@ RemoteRoom.prototype._removeFromSyncCache = function (instance)
     delete this._syncCache[instance.__static.name][instance._id];
 };
 
-RemoteRoom.prototype.registerInstance = function (instances)
+RemoteRoom.prototype.link = function (instances)
 {
     if (!util.isArray(instances))
     {
@@ -138,7 +138,7 @@ RemoteRoom.prototype.registerInstance = function (instances)
         if (!(instance instanceof Remoted)) continue;
         for (j in this.sockets)
         {
-            this.sockets[j].registerInstance(instance);
+            this.sockets[j].link(instance);
         }
     }
 };
@@ -193,7 +193,7 @@ RemoteRoom.prototype.bindSocket = function (socket)
                 {
                     if (initData[i][j] instanceof Remoted)
                     {
-                        this.registerInstance(initData[i][j]);
+                        this.link(initData[i][j]);
                         remoted[i][j] = {type: initData[i][j].__static.name, data: initData[i][j].toJSON(socket.user)};
                     }
                 }
@@ -210,7 +210,7 @@ RemoteRoom.prototype.bindSocket = function (socket)
             {
                 if (initData[i] instanceof Remoted)
                 {
-                    this.registerInstance(initData[i]);
+                    this.link(initData[i]);
                     remoted[i] = {type: initData[i].__static.name, data: initData[i].toJSON(socket.user)};
                     delete initData[i];
                 }
